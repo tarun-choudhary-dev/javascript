@@ -2,7 +2,7 @@
 
 A standalone browser library for executing one synchronous ECMAScript Script per call. It exposes a small API for applications; it has no editor, terminal, routing, persistence, package system, or backend execution service.
 
-**Status: Phase 3 hardening completed; private pre-release package.** The bundled engine passed 22 browser tests each in Playwright Chromium 140, Firefox 141, and WebKit 26 on Windows. These are tested configurations, not a supported browser range. Actual Safari, Edge, mobile browsers, strict CSP, memory ceilings, production limit calibration, and the compiled-WASM license audit remain open.
+**Status: Phase 4 internal architecture completed; private pre-release package.** The bundled engine passed 27 browser tests each in Playwright Chromium 140, Firefox 141, and WebKit 26 on Windows, plus 17 unit tests and a clean packed-consumer test. These are tested configurations, not a supported browser range. Actual Safari, Edge, mobile browsers, strict CSP, memory ceilings, production limit calibration, and the compiled-WASM license audit remain open.
 
 ```js
 import {JavaScriptEngine} from 'javascript-browser-engine';
@@ -19,7 +19,7 @@ try {
 
 The host creates a dedicated module Worker. The trusted Worker adapter loads QuickJS 2025-09-13 through `quickjs-emscripten-core` and the `@jitl/quickjs-wasmfile-release-sync` 0.32.0 variant. It creates and destroys a guest runtime/context for each run. A run does not preserve guest globals; `reset()` also replaces the Worker and WASM instance. `cancel()` and timeout invalidate and terminate the old Worker, then boot one replacement. Guest code is interpreted by QuickJS and receives no browser API bridge. The trusted adapter loads a same-origin WASM file using browser network APIs, separately from guest execution.
 
-The initial `script-sync-v1` profile ignores completion values and does not drain Promise jobs. `console.log/info/debug` produce stdout; `warn/error` produce stderr. Syntax and runtime exceptions yield `program-error`; admitted engine faults yield `engine-error`; invalid or out-of-state requests reject with `EngineError`. Each admitted run resolves `{status, stdout, stderr, durationMs, error, truncated}`. `run()` accepts `{source, filename?, timeoutMs?}`. `cancel()` hard-terminates the current Worker, and `reset()` replaces it. The current policy caps source at 32,768 UTF-16 units, output at 32,768 units, default execution at 2 seconds, and requested execution at 5 seconds. These values are provisional.
+The initial `script-sync-v1` profile ignores completion values and does not drain Promise jobs. `console.log/info/debug` produce stdout; `warn/error` produce stderr. Syntax and runtime exceptions yield `program-error`; admitted engine faults yield `engine-error`; invalid or out-of-state requests reject with `EngineError`. Each admitted run resolves `{status, stdout, stderr, durationMs, error, truncated}`. `run()` accepts `{source, filename?, timeoutMs?}`. `cancel()` hard-terminates the current Worker, and `reset()` replaces it. The current policy caps source at 32,768 UTF-16 units, output at 32,768 units, default execution at 2 seconds, and requested execution at 5 seconds. Output truncation and stream chunks preserve valid surrogate pairs from well-formed guest strings; limits count UTF-16 units, so combining sequences may still be split. These values are provisional.
 
 ## Build and verify
 
@@ -29,6 +29,9 @@ npm run build
 npm test
 npx playwright install chromium
 npm run test:browser
+npx playwright install firefox webkit
+npx playwright test --browser=firefox
+npx playwright test --browser=webkit
 npm run test:consumer
 ```
 

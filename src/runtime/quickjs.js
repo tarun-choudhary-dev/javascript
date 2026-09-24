@@ -1,6 +1,8 @@
 import RELEASE_SYNC from '@jitl/quickjs-wasmfile-release-sync';
 import {newQuickJSWASMModuleFromVariant, newVariant} from 'quickjs-emscripten-core';
 import {LIMITS} from '../limits/policy.js';
+import {createOutputCollector, safePrefix} from './output.js';
+import {withQuickJSContext} from './session.js';
 
 let moduleInstance;
 
@@ -10,40 +12,22 @@ export async function initializeQuickJS() {
   });
   moduleInstance = await newQuickJSWASMModuleFromVariant(variant);
   // Verify a real interpreter can create, evaluate and dispose a context.
-  const runtime = moduleInstance.newRuntime();
-  try {
-    runtime.setMemoryLimit(LIMITS.guestHeapBytes);
-    runtime.setMaxStackSize(LIMITS.guestStackBytes);
-    const context = runtime.newContext();
-    try {
-      const answer = context.evalCode('1 + 1', 'self-check.js', {type: 'global'});
-      if (answer.error) { answer.error.dispose(); throw new Error('runtime self-check failed'); }
-      try { if (context.getNumber(answer.value) !== 2) throw new Error('runtime self-check failed'); }
-      finally { answer.value.dispose(); }
-    } finally { context.dispose(); }
-  } finally { runtime.dispose(); }
+  withQuickJSContext(moduleInstance, null, context => {
+    const answer = context.evalCode('1 + 1', 'self-check.js', {type: 'global'});
+    if (answer.error) { answer.error.dispose(); throw new Error('runtime self-check failed'); }
+    try { if (context.getNumber(answer.value) !== 2) throw new Error('runtime self-check failed'); }
+    finally { answer.value.dispose(); }
+  });
 }
-
-const safePrefix = (value, cap) => {
-  if (value.length <= cap) return value;
-  if (cap > 0 && /[\uD800-\uDBFF]/u.test(value[cap - 1])) cap--;
-  return value.slice(0, cap);
-};
 
 export function executeScript({source, filename, executionBudgetMs}, stream) {
   if (!moduleInstance) throw new Error('runtime unavailable');
   const started = performance.now();
   const deadline = started + executionBudgetMs;
-  const runtime = moduleInstance.newRuntime();
   let context;
   let sliceFunction;
   let objectIs;
-  let truncation = false;
-  let callCount = 0;
-  let sequence = 0;
-  let stdoutChars = 0;
-  let stderrChars = 0;
-  let quotaReached = false;
+  const output = createOutputCollector(stream);
   let interrupted = false;
   let outcome;
 
@@ -54,7 +38,7 @@ export function executeScript({source, filename, executionBudgetMs}, stream) {
     let length;
     try { length = context.getNumber(lengthHandle); } finally { dispose(lengthHandle); }
     if (length > cap) {
-      truncation = true;
+      output.markTruncated();
       const zero = context.newNumber(0);
       // Include one look-ahead unit so the Worker can avoid splitting a UTF-16 pair.
       const end = context.newNumber(cap + 1);
@@ -84,93 +68,79 @@ export function executeScript({source, filename, executionBudgetMs}, stream) {
     }
     return '[object]';
   };
-  const append = (channel, value) => {
-    const channelCount = channel === 'stdout' ? stdoutChars : stderrChars;
-    const remaining = Math.min(LIMITS[`${channel}Chars`] - channelCount,
-      LIMITS.combinedOutputChars - stdoutChars - stderrChars);
-    if (remaining <= 0) { truncation = true; return; }
-    if (value.length > remaining) { value = safePrefix(value, remaining); truncation = true; }
-    for (let index = 0; index < value.length; index += LIMITS.streamChunkChars) {
-      if (sequence >= LIMITS.streamMessageCount) { quotaReached = true; return; }
-      const chunk = value.slice(index, index + LIMITS.streamChunkChars);
-      sequence++;
-      if (channel === 'stdout') stdoutChars += chunk.length;
-      else stderrChars += chunk.length;
-      stream({sequence, channel, text: chunk});
-    }
-  };
   const consoleCall = channel => (...args) => {
-    if (++callCount > LIMITS.consoleCallCount) { quotaReached = true; throw new Error('console call quota'); }
+    if (!output.noteConsoleCall()) throw new Error('console call quota');
     const count = Math.min(args.length, LIMITS.consoleArgumentCount);
-    if (args.length > count) truncation = true;
+    if (args.length > count) output.markTruncated();
     const parts = [];
     for (let index = 0; index < count; index++) parts.push(primitiveText(args[index], LIMITS.streamChunkChars));
-    append(channel, parts.join(' ') + '\n');
+    output.append(channel, parts.join(' ') + '\n');
     return context.undefined;
   };
 
-  try {
-    runtime.setMemoryLimit(LIMITS.guestHeapBytes);
-    runtime.setMaxStackSize(LIMITS.guestStackBytes);
+  withQuickJSContext(moduleInstance, runtime => {
     runtime.setInterruptHandler(() => {
       if (performance.now() >= deadline) { interrupted = true; return true; }
       return false;
     });
-    context = runtime.newContext();
-    const stringConstructor = context.getProp(context.global, 'String');
-    const stringPrototype = context.getProp(stringConstructor, 'prototype');
-    sliceFunction = context.getProp(stringPrototype, 'slice');
-    dispose(stringPrototype); dispose(stringConstructor);
-    const objectConstructor = context.getProp(context.global, 'Object');
-    objectIs = context.getProp(objectConstructor, 'is');
-    dispose(objectConstructor);
-    const consoleObject = context.newObject();
+  }, guestContext => {
+    context = guestContext;
     try {
-      for (const [method, channel] of [['log', 'stdout'], ['info', 'stdout'],
-        ['debug', 'stdout'], ['warn', 'stderr'], ['error', 'stderr']]) {
-        const fn = context.newFunction(method, consoleCall(channel));
-        try { context.setProp(consoleObject, method, fn); } finally { dispose(fn); }
-      }
-      context.setProp(context.global, 'console', consoleObject);
-    } finally { dispose(consoleObject); }
-
-    const evaluated = context.evalCode(source, filename, {type: 'global'});
-    if (evaluated.error) {
+      const stringConstructor = context.getProp(context.global, 'String');
       try {
-        if (interrupted) outcome = {status: 'engine-error', error: {kind: 'engine', code: 'EXECUTION_TIMEOUT'}};
-        else if (quotaReached) outcome = {status: 'engine-error', error: {kind: 'engine', code: 'RESOURCE_LIMIT'}};
-        else {
-          const error = evaluated.error;
-          let name = 'ThrownValue', message = '', stack = null;
-          if (context.typeof(error) === 'object') {
-            for (const [key, cap] of [['name', LIMITS.errorNameChars],
-              ['message', LIMITS.errorMessageChars], ['stack', LIMITS.errorStackChars]]) {
-              const property = context.getProp(error, key);
-              try {
-                const text = textOf(property, cap);
-                if (text !== null) {
-                  if (key === 'name') name = text;
-                  if (key === 'message') message = text;
-                  if (key === 'stack') stack = text;
-                }
-              } finally { dispose(property); }
-            }
-          } else message = safePrefix(primitiveText(error, LIMITS.errorMessageChars), LIMITS.errorMessageChars);
-          outcome = name === 'InternalError' ?
-            {status: 'engine-error', error: {kind: 'engine', code: 'RUNTIME_FAILURE'}} :
-            {status: 'program-error', error: {kind: 'program', name, message, stack, filename}};
+        const stringPrototype = context.getProp(stringConstructor, 'prototype');
+        try { sliceFunction = context.getProp(stringPrototype, 'slice'); }
+        finally { dispose(stringPrototype); }
+      } finally { dispose(stringConstructor); }
+      const objectConstructor = context.getProp(context.global, 'Object');
+      try { objectIs = context.getProp(objectConstructor, 'is'); }
+      finally { dispose(objectConstructor); }
+      const consoleObject = context.newObject();
+      try {
+        for (const [method, channel] of [['log', 'stdout'], ['info', 'stdout'],
+          ['debug', 'stdout'], ['warn', 'stderr'], ['error', 'stderr']]) {
+          const fn = context.newFunction(method, consoleCall(channel));
+          try { context.setProp(consoleObject, method, fn); } finally { dispose(fn); }
         }
-      } finally { dispose(evaluated.error); }
-    } else {
-      dispose(evaluated.value);
-      outcome = quotaReached ? {status: 'engine-error', error: {kind: 'engine', code: 'RESOURCE_LIMIT'}} :
-        {status: 'ok', error: null};
+        context.setProp(context.global, 'console', consoleObject);
+      } finally { dispose(consoleObject); }
+
+      const evaluated = context.evalCode(source, filename, {type: 'global'});
+      if (evaluated.error) {
+        try {
+          if (interrupted) outcome = {status: 'engine-error', error: {kind: 'engine', code: 'EXECUTION_TIMEOUT'}};
+          else if (output.quotaReached) outcome = {status: 'engine-error', error: {kind: 'engine', code: 'RESOURCE_LIMIT'}};
+          else {
+            const error = evaluated.error;
+            let name = 'ThrownValue', message = '', stack = null;
+            if (context.typeof(error) === 'object') {
+              for (const [key, cap] of [['name', LIMITS.errorNameChars],
+                ['message', LIMITS.errorMessageChars], ['stack', LIMITS.errorStackChars]]) {
+                const property = context.getProp(error, key);
+                try {
+                  const text = textOf(property, cap);
+                  if (text !== null) {
+                    if (key === 'name') name = text;
+                    if (key === 'message') message = text;
+                    if (key === 'stack') stack = text;
+                  }
+                } finally { dispose(property); }
+              }
+            } else message = safePrefix(primitiveText(error, LIMITS.errorMessageChars), LIMITS.errorMessageChars);
+            outcome = name === 'InternalError' ?
+              {status: 'engine-error', error: {kind: 'engine', code: 'RUNTIME_FAILURE'}} :
+              {status: 'program-error', error: {kind: 'program', name, message, stack, filename}};
+          }
+        } finally { dispose(evaluated.error); }
+      } else {
+        dispose(evaluated.value);
+        outcome = output.quotaReached ? {status: 'engine-error', error: {kind: 'engine', code: 'RESOURCE_LIMIT'}} :
+          {status: 'ok', error: null};
+      }
+    } finally {
+      dispose(sliceFunction);
+      dispose(objectIs);
     }
-  } finally {
-    dispose(sliceFunction);
-    dispose(objectIs);
-    if (context) context.dispose();
-    runtime.dispose();
-  }
-  return {...outcome, truncated: truncation, lastSequence: sequence, stdoutChars, stderrChars};
+  });
+  return {...outcome, ...output.summary()};
 }

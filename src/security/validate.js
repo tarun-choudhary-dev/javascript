@@ -36,5 +36,5 @@ export function validateRequest(request) {
   if (source.includes('\0') || !validFilename(filename) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > LIMITS.maxExecutionTimeoutMs)
     throw new EngineError('INVALID_REQUEST');
-  return {source, filename, timeoutMs};
+  return Object.freeze({source, filename, timeoutMs});
 }

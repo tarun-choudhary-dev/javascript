@@ -233,3 +233,84 @@ test('recovery boot failure leaves failed state and explicit initialize retries'
     engine.dispose();
   } finally { globalThis.Worker = realWorker; }
 });
+
+test('Worker construction and run post failures have bounded retry/recovery paths', async () => {
+  const realWorker = globalThis.Worker;
+  let constructions = 0;
+  let failedRunPost = false;
+  class TransportFailWorker extends FakeWorker {
+    constructor() {
+      if (++constructions === 1) throw Error('construction failed');
+      super();
+    }
+    postMessage(raw) {
+      const message = decode(raw);
+      if (message.type === 'run' && !failedRunPost) {
+        failedRunPost = true;
+        throw Error('post failed');
+      }
+      super.postMessage(raw);
+    }
+  }
+  globalThis.Worker = TransportFailWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await assert.rejects(engine.initialize(), {code: 'INITIALIZATION_FAILED'});
+    assert.equal(engine.getState(), 'failed');
+    await engine.initialize();
+    const failed = await engine.run({source: '1'});
+    assert.equal(failed.error.code, 'WORKER_FAILURE');
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
+    assert.equal(FakeWorker.instances.length, 2);
+    engine.dispose();
+  } finally { globalThis.Worker = realWorker; }
+});
+
+test('malformed program error and runtime fatal remain engine failures', async () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await engine.initialize();
+    const firstWorker = FakeWorker.instances.at(-1);
+    const first = engine.run({source: 'throw Error("x")'});
+    const firstId = firstWorker.sent.at(-1);
+    firstWorker.deliver(firstId.generation, firstId.requestId, 'run', 'result',
+      {status: 'program-error', error: {kind: 'program', name: 'Error', message: 'x',
+        stack: null}, truncated: false, lastSequence: 0, stdoutChars: 0, stderrChars: 0});
+    assert.equal((await first).error.code, 'PROTOCOL_ERROR');
+    await engine.initialize();
+    const secondWorker = FakeWorker.instances.at(-1);
+    const second = engine.run({source: '1'});
+    const secondId = secondWorker.sent.at(-1);
+    secondWorker.deliver(secondId.generation, secondId.requestId, 'run', 'fatal',
+      {code: 'RUNTIME_FAILURE'});
+    assert.equal((await second).error.code, 'RUNTIME_FAILURE');
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
+    engine.dispose();
+  } finally { globalThis.Worker = realWorker; }
+});
+
+test('dispose stays terminal if the Worker termination API throws', async () => {
+  const realWorker = globalThis.Worker;
+  class TerminationFailWorker extends FakeWorker {
+    terminate() { this.terminated = true; throw Error('browser termination failure'); }
+  }
+  globalThis.Worker = TerminationFailWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await engine.initialize();
+    const worker = FakeWorker.instances[0];
+    const formerHandler = worker.onmessage;
+    engine.dispose();
+    assert.equal(engine.getState(), 'disposed');
+    assert.equal(worker.onmessage, null);
+    formerHandler({data: null, ports: []});
+    assert.equal(engine.getState(), 'disposed');
+  } finally { globalThis.Worker = realWorker; }
+});

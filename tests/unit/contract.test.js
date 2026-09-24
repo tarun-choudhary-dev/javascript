@@ -5,6 +5,7 @@ import {LIMITS} from '../../src/limits/policy.js';
 import {decode, encode, validResult, validStream} from '../../src/execution/protocol.js';
 
 test('request validation at source and filename boundaries', () => {
+  assert.equal(Object.isFrozen(validateRequest({source: '1'})), true);
   for (const length of [LIMITS.sourceChars - 1, LIMITS.sourceChars])
     assert.equal(validateRequest({source: 'x'.repeat(length)}).source.length, length);
   assert.throws(() => validateRequest({source: 'x'.repeat(LIMITS.sourceChars + 1)}), {code: 'INPUT_LIMIT'});
