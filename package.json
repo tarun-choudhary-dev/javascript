@@ -6,7 +6,7 @@
   "type": "module",
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "README.md", "LICENSE", "PROJECT_NOTICE.txt"],
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test tests/unit/*.test.js",
@@ -15,7 +15,7 @@
     "test:release": "node scripts/test-release-candidate.mjs",
     "prepack": "npm run build"
   },
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/tarun-choudhary-dev/javascript.git"

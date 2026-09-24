@@ -3,6 +3,7 @@ import {copyFile, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {dirname, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
+import {writeSourceArchive} from './source-archive.mjs';
 
 const require = createRequire(import.meta.url);
 const packagePath = require.resolve('@jitl/quickjs-wasmfile-release-sync/package.json');
@@ -21,6 +22,10 @@ for (const [entry, outfile] of [['src/index.js', 'dist/index.js'], ['src/runtime
 await copyFile(wasm, 'dist/emscripten-module.wasm');
 await copyFile('src/index.d.ts', 'dist/index.d.ts');
 const upstreamNotice = await readFile(resolve(dirname(packagePath), 'LICENSE'), 'utf8');
+const runtimeNotice = (await readFile('third_party/runtime-notices.txt', 'utf8')).replaceAll('\r\n', '\n');
+const runtimeNoticeSha256 = createHash('sha256').update(runtimeNotice).digest('hex');
+if (runtimeNoticeSha256 !== '033706c91a1a76d2eca1ae74daca5b5a9a1a98410e7dd587099a1d4358c655c9')
+  throw new Error('Pinned SDK notice changed; review selected WASM inputs and licenses');
 const notice = `Third-party notices — private 0.1.0 release candidate\n\n` +
   `Verified package identities: quickjs-emscripten-core 0.32.0, ` +
   `@jitl/quickjs-wasmfile-release-sync 0.32.0, and @jitl/quickjs-ffi-types 0.32.0. ` +
@@ -35,9 +40,26 @@ const notice = `Third-party notices — private 0.1.0 release candidate\n\n` +
   `QuickJS source: https://github.com/bellard/quickjs/tree/f1139494d18a2053630c5ed3384a42bb70db3c53\n` +
   `Vendored build source: https://github.com/justjake/quickjs-emscripten/tree/df4efb9ef2cb25c417ecb57986da462d11b244ed\n` +
   `WASM SHA-256: ${wasmSha256}.\n\n` +
-  `This notice covers identified QuickJS/binding text. The exact linked ` +
-  `Emscripten/libc/compiler inputs and any additional notices are still under ` +
-  `audit; this private candidate is not cleared for public distribution.\n\n` +
-  `--- Upstream combined license text (verbatim) ---\n\n${upstreamNotice}`;
+  `The pinned SDK build/link audit identified 321 selected archive members; ` +
+  `the final map named 30 with retained sections. Attribution for the selected ` +
+  `SDK families follows after the upstream binding/QuickJS license. Selection ` +
+  `does not prove each member survived link-time optimization.\n\n` +
+  `--- Upstream combined binding/QuickJS license text (verbatim) ---\n\n${upstreamNotice}` +
+  `\n--- Pinned SDK runtime notices ---\n\n${runtimeNotice}`;
 await writeFile('dist/THIRD_PARTY_NOTICES.txt', notice);
 await writeFile('dist/package.json', JSON.stringify({type: 'module'}, null, 2));
+const snapshot = await writeSourceArchive('dist/SOURCE_SNAPSHOT.tar');
+await writeFile('dist/PROVENANCE.json', JSON.stringify({
+  schemaVersion: 1,
+  project: {name: 'javascript-browser-engine', version: '0.1.0',
+    license: 'AGPL-3.0-only', copyright: 'Copyright (C) 2026 tarun choudhary',
+    sourceArchive: 'dist/SOURCE_SNAPSHOT.tar', sourceSha256: snapshot.sha256,
+    sourceFiles: snapshot.files},
+  runtime: {variant: '@jitl/quickjs-wasmfile-release-sync', version: '0.32.0',
+    sourceCommit: 'df4efb9ef2cb25c417ecb57986da462d11b244ed',
+    quickjsVersion: '2025-09-13', quickjsCommit: 'f1139494d18a2053630c5ed3384a42bb70db3c53',
+    emscriptenVersion: '5.0.1', emscriptenCommit: '8c5f43157a3f069ade75876e23061330521eabde',
+    emsdkImageDigest: 'sha256:40a30b0e22be2b1fce570a5fcbf8124c4ccb22962b49850546863da07d374a51',
+    wasm: 'dist/emscripten-module.wasm', wasmSha256},
+  notices: {file: 'dist/THIRD_PARTY_NOTICES.txt', sdkSourceSha256: runtimeNoticeSha256}
+}, null, 2) + '\n');

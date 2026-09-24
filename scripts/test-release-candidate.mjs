@@ -15,7 +15,9 @@ const consumer = join(root, 'consumer');
 const repeatConsumer = join(root, 'repeat-consumer');
 const firstPack = join(root, 'first-pack');
 const repeatPack = join(root, 'repeat-pack');
-const expectedFiles = ['LICENSE', 'README.md', 'dist/THIRD_PARTY_NOTICES.txt',
+const snapshotSource = join(root, 'snapshot-source');
+const expectedFiles = ['LICENSE', 'PROJECT_NOTICE.txt', 'README.md', 'dist/PROVENANCE.json',
+  'dist/SOURCE_SNAPSHOT.tar', 'dist/THIRD_PARTY_NOTICES.txt',
   'dist/emscripten-module.wasm', 'dist/index.d.ts', 'dist/index.js', 'dist/package.json',
   'dist/worker.js', 'package.json'].sort();
 const distFiles = expectedFiles.filter(path => path.startsWith('dist/'));
@@ -30,6 +32,17 @@ function npm(args, cwd, capture = false) {
     child.stdout?.on('data', chunk => { output += chunk; });
     child.on('error', reject);
     child.on('exit', code => code === 0 ? resolvePromise(output) : reject(new Error(`npm ${args[0]} exited ${code}`)));
+  });
+}
+
+function tar(args, cwd, capture = false) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('tar', args, {cwd,
+      stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit'});
+    let output = '';
+    child.stdout?.on('data', chunk => { output += chunk; });
+    child.on('error', reject);
+    child.on('exit', code => code === 0 ? resolvePromise(output) : reject(new Error(`tar exited ${code}`)));
   });
 }
 
@@ -142,11 +155,14 @@ try {
   await mkdir(repeatConsumer);
   await mkdir(firstPack);
   await mkdir(repeatPack);
-  for (const file of ['package.json', 'package-lock.json', 'README.md', 'LICENSE'])
+  await mkdir(snapshotSource);
+  for (const file of ['package.json', 'package-lock.json', 'README.md', 'LICENSE', 'PROJECT_NOTICE.txt'])
     await copyFile(file, join(source, file));
   await cp('src', join(source, 'src'), {recursive: true});
+  await cp('third_party', join(source, 'third_party'), {recursive: true});
   await mkdir(join(source, 'scripts'));
   await copyFile('scripts/build.mjs', join(source, 'scripts/build.mjs'));
+  await copyFile('scripts/source-archive.mjs', join(source, 'scripts/source-archive.mjs'));
   await npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund'], source);
   await npm(['run', 'build'], source);
   const first = await hashes(source);
@@ -182,6 +198,29 @@ try {
   const repeatedArchiveHash = createHash('sha256').update(await readFile(repeatedTarball)).digest('hex');
   if (firstArchiveHash !== repeatedArchiveHash)
     throw new Error('Repeated tarball bytes differ despite equal package contents');
+  const provenance = JSON.parse(await readFile(join(installed, 'dist/PROVENANCE.json'), 'utf8'));
+  const sourceArchive = join(installed, provenance.project.sourceArchive);
+  const archiveHash = createHash('sha256').update(await readFile(sourceArchive)).digest('hex');
+  if (provenance.schemaVersion !== 1 || provenance.project.license !== 'AGPL-3.0-only' ||
+      provenance.project.copyright !== 'Copyright (C) 2026 tarun choudhary' ||
+      provenance.runtime.wasmSha256 !== first['dist/emscripten-module.wasm'] ||
+      archiveHash !== provenance.project.sourceSha256)
+    throw new Error('Packed provenance does not match project source or runtime');
+  const archivedFiles = (await tar(['-tf', sourceArchive], snapshotSource, true)).trim().split(/\r?\n/u);
+  if (JSON.stringify(archivedFiles) !== JSON.stringify(provenance.project.sourceFiles) ||
+      archivedFiles.some(file => file.startsWith('docs/') || file.includes('SKILL.md') ||
+        file.endsWith('.md') && file !== 'README.md'))
+    throw new Error('Source snapshot file list differs from provenance or contains private Markdown');
+  await tar(['-xf', sourceArchive, '-C', snapshotSource], snapshotSource);
+  for (const file of archivedFiles) {
+    const [archived, original] = await Promise.all([
+      readFile(join(snapshotSource, file)), readFile(join(source, file))]);
+    if (!archived.equals(original)) throw new Error(`Source snapshot mismatch: ${file}`);
+  }
+  await npm(['ci', '--ignore-scripts', '--no-audit', '--no-fund'], snapshotSource);
+  await npm(['run', 'build'], snapshotSource);
+  if (JSON.stringify(await hashes(snapshotSource)) !== JSON.stringify(first))
+    throw new Error('Source snapshot did not reproduce packed distribution bytes');
   const base = await serve();
   const products = [{name: 'Chrome', type: chromium, channel: 'chrome'},
     {name: 'Edge', type: chromium, channel: 'msedge'}];
@@ -211,7 +250,7 @@ try {
       process.stdout.write(`${item.name} ${browser.version()}: 3/3 release-candidate contracts passed\n`);
     } finally { await browser.close(); }
   }
-  process.stdout.write(`Clean repeat build and two installed archives identical: ${Object.keys(second).length} dist files; ${names.length} packed files; ${manifest.size} tarball bytes; archive SHA-256 ${firstArchiveHash}.\n`);
+  process.stdout.write(`Clean repeat build, source snapshot rebuild, and two installed archives identical: ${Object.keys(second).length} dist files; ${names.length} packed files; ${manifest.size} tarball bytes; archive SHA-256 ${firstArchiveHash}; source SHA-256 ${archiveHash}.\n`);
 } finally {
   if (server) await new Promise(resolvePromise => server.close(resolvePromise));
   const resolvedRoot = await realpath(root);

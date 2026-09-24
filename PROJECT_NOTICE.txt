@@ -1,0 +1,10 @@
+JavaScript Browser Language Engine — project-owned code
+
+Copyright (C) 2026 tarun choudhary
+SPDX-License-Identifier: AGPL-3.0-only
+
+The project-owned engine source and generated code are licensed under the GNU
+Affero General Public License version 3 only. The unmodified license text is
+in LICENSE. Third-party code included in the browser Worker and WASM retains
+its own licenses and attribution; see dist/THIRD_PARTY_NOTICES.txt in the
+package.

@@ -1,6 +1,7 @@
 import {mkdtemp, readFile, realpath, rm, mkdir} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
+import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join, resolve, sep, extname} from 'node:path';
 import {chromium} from '@playwright/test';
@@ -26,7 +27,8 @@ function npm(args, capture = false) {
 
 try {
   const manifest = JSON.parse(await npm(['pack', '--json', '--pack-destination', tempRoot], true))[0];
-  const expectedFiles = ['LICENSE', 'README.md', 'dist/THIRD_PARTY_NOTICES.txt',
+  const expectedFiles = ['LICENSE', 'PROJECT_NOTICE.txt', 'README.md',
+    'dist/PROVENANCE.json', 'dist/SOURCE_SNAPSHOT.tar', 'dist/THIRD_PARTY_NOTICES.txt',
     'dist/emscripten-module.wasm', 'dist/index.d.ts', 'dist/index.js', 'dist/package.json',
     'dist/worker.js', 'package.json'];
   const actualFiles = manifest.files.map(file => file.path).sort();
@@ -40,6 +42,18 @@ try {
   }
   const tarball = join(tempRoot, 'javascript-browser-engine-0.1.0.tgz');
   await npm(['install', '--prefix', consumer, '--ignore-scripts', '--no-audit', '--no-fund', tarball]);
+  const packageRoot = resolve(consumer, 'node_modules/javascript-browser-engine');
+  const provenance = JSON.parse(await readFile(join(packageRoot, 'dist/PROVENANCE.json'), 'utf8'));
+  const projectNotice = await readFile(join(packageRoot, 'PROJECT_NOTICE.txt'), 'utf8');
+  const thirdPartyNotice = await readFile(join(packageRoot, 'dist/THIRD_PARTY_NOTICES.txt'), 'utf8');
+  const sourceArchive = await readFile(join(packageRoot, 'dist/SOURCE_SNAPSHOT.tar'));
+  if (provenance.project.license !== 'AGPL-3.0-only' ||
+      provenance.project.copyright !== 'Copyright (C) 2026 tarun choudhary' ||
+      !projectNotice.includes('SPDX-License-Identifier: AGPL-3.0-only') ||
+      !thirdPartyNotice.includes('Apache-2.0 WITH LLVM-exception') ||
+      !thirdPartyNotice.includes('Copyright © 2005-2020 Rich Felker') ||
+      createHash('sha256').update(sourceArchive).digest('hex') !== provenance.project.sourceSha256)
+    throw new Error('Installed consumer cannot verify license, notices, and source provenance');
   const assetRoot = resolve(consumer, 'node_modules/javascript-browser-engine/dist');
   server = createServer(async (request, response) => {
     if (request.url === '/') { response.writeHead(200, {'Content-Type': 'text/html'}).end('<!doctype html><title>consumer</title>'); return; }
