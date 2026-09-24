@@ -16,10 +16,14 @@ self.onmessage = async event => {
   if (!message) return;
   const {requestId, op, type, payload} = message;
   if (phase === 'created') {
-    if (op !== 'initialize' || type !== 'init' || !exactKeys(payload, ['policyVersion', 'limits']) ||
-        payload.policyVersion !== POLICY_VERSION || !validLimits(payload.limits)) return;
     generation = message.generation;
     lastRequestId = requestId;
+    if (op !== 'initialize' || type !== 'init' || !exactKeys(payload, ['policyVersion', 'limits']) ||
+        payload.policyVersion !== POLICY_VERSION || !validLimits(payload.limits)) {
+      phase = 'failed';
+      send(requestId, 'initialize', 'fatal', {code: 'PROTOCOL_ERROR'});
+      return;
+    }
     phase = 'initializing';
     try {
       await initializeQuickJS();
@@ -33,8 +37,10 @@ self.onmessage = async event => {
   }
   if (phase !== 'ready' || message.generation !== generation || requestId <= lastRequestId ||
       op !== 'run' || type !== 'run' || !validRun(payload)) {
-    if (phase === 'ready' && message.generation === generation && requestId > lastRequestId)
+    if (phase === 'ready' && message.generation === generation && requestId > lastRequestId) {
+      phase = 'failed';
       send(requestId, 'run', 'fatal', {code: 'PROTOCOL_ERROR'});
+    }
     return;
   }
   lastRequestId = requestId;

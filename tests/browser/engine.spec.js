@@ -1,27 +1,12 @@
 import {test, expect} from '@playwright/test';
-import {createServer} from 'node:http';
-import {readFile} from 'node:fs/promises';
-import {extname, resolve, sep} from 'node:path';
+import {startFixtureServer} from './server.js';
 
-let server;
-let base;
-test.beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const path = resolve('.', `.${decodeURIComponent(new URL(request.url, 'http://localhost').pathname)}`);
-    if (!path.startsWith(resolve('.') + sep)) { response.writeHead(403).end(); return; }
-    try {
-      const bytes = await readFile(path);
-      const mime = {'.js': 'text/javascript', '.wasm': 'application/wasm', '.html': 'text/html'}[extname(path)] ?? 'application/octet-stream';
-      response.writeHead(200, {'Content-Type': mime}).end(bytes);
-    } catch { response.writeHead(404).end(); }
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  base = `http://127.0.0.1:${server.address().port}`;
-});
-test.afterAll(async () => { await new Promise(resolve => server.close(resolve)); });
+let fixture;
+test.beforeAll(async () => { fixture = await startFixtureServer(); });
+test.afterAll(async () => { await fixture.close(); });
 
 test('external-style consumer initializes, executes, resets and disposes', async ({page}) => {
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     const {JavaScriptEngine} = await import('/dist/index.js');
     const engine = new JavaScriptEngine();
@@ -50,7 +35,7 @@ test('external-style consumer initializes, executes, resets and disposes', async
 });
 
 test('infinite loop cancellation terminates and recovers Worker', async ({page}) => {
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     const {JavaScriptEngine} = await import('/dist/index.js');
     const engine = new JavaScriptEngine();
@@ -69,7 +54,7 @@ test('infinite loop cancellation terminates and recovers Worker', async ({page})
 });
 
 test('host deadline interrupts infinite loop and recovers', async ({page}) => {
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     const {JavaScriptEngine} = await import('/dist/index.js');
     const engine = new JavaScriptEngine();
@@ -85,7 +70,7 @@ test('host deadline interrupts infinite loop and recovers', async ({page}) => {
 });
 
 test('guest has no ambient browser API references', async ({page}) => {
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     const {JavaScriptEngine} = await import('/dist/index.js');
     const engine = new JavaScriptEngine();
@@ -97,7 +82,7 @@ test('guest has no ambient browser API references', async ({page}) => {
 });
 
 test('script profile, output bounds, and invalid lifecycle calls', async ({page}) => {
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     const {JavaScriptEngine} = await import('/dist/index.js');
     const engine = new JavaScriptEngine();
@@ -125,7 +110,7 @@ test('script profile, output bounds, and invalid lifecycle calls', async ({page}
 test('guest cannot read host storage canary or issue fetch through browser APIs', async ({page}) => {
   let externalRequests = 0;
   page.on('request', request => { if (request.url().includes('/forbidden-network')) externalRequests++; });
-  await page.goto(`${base}/tests/browser/fixture.html`);
+  await page.goto(`${fixture.base}/tests/browser/fixture.html`);
   const result = await page.evaluate(async () => {
     localStorage.setItem('engine-canary', 'secret');
     const {JavaScriptEngine} = await import('/dist/index.js');

@@ -152,9 +152,10 @@ export class EngineController {
       const message = decode(event.data);
       if (!message) return this.#protocolFailure();
       const current = this.#boot ?? this.#run;
-      if (message.generation < generation || message.requestId < (current?.requestId ?? this.#requestId) ||
+      if (message.generation < generation) return;
+      if (message.generation > generation) return this.#protocolFailure();
+      if (message.requestId < (current?.requestId ?? this.#requestId) ||
           (!current && message.requestId === this.#requestId)) return;
-      if (message.generation !== generation) return this.#protocolFailure();
       if (!current || message.requestId !== current.requestId) return this.#protocolFailure();
       if (this.#boot) {
         if (now() >= this.#boot.deadline) return this.#bootFailure(this.#boot,

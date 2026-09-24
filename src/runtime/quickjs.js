@@ -56,7 +56,8 @@ export function executeScript({source, filename, executionBudgetMs}, stream) {
     if (length > cap) {
       truncation = true;
       const zero = context.newNumber(0);
-      const end = context.newNumber(cap);
+      // Include one look-ahead unit so the Worker can avoid splitting a UTF-16 pair.
+      const end = context.newNumber(cap + 1);
       let result;
       try { result = context.callFunction(sliceFunction, handle, zero, end); }
       finally { dispose(zero); dispose(end); }

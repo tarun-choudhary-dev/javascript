@@ -84,6 +84,25 @@ test('future request identity is a protocol fault rather than a new operation', 
   } finally { globalThis.Worker = realWorker; }
 });
 
+test('future generation is a protocol fault even with an older request ID', async () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await engine.initialize();
+    const worker = FakeWorker.instances[0];
+    const pending = engine.run({source: '1'});
+    const current = worker.sent.at(-1);
+    worker.deliver(current.generation + 1, current.requestId - 1, 'run', 'result',
+      {status: 'ok', error: null, truncated: false, lastSequence: 0, stdoutChars: 0, stderrChars: 0});
+    assert.equal((await pending).error.code, 'PROTOCOL_ERROR');
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
+    engine.dispose();
+  } finally { globalThis.Worker = realWorker; }
+});
+
 test('retired execution timeout cannot abort a replacement run', async () => {
   const realWorker = globalThis.Worker;
   const realSetTimeout = globalThis.setTimeout;
@@ -132,6 +151,85 @@ test('malformed current response fails run and recovers once', async () => {
     await engine.initialize();
     assert.equal(engine.getState(), 'ready');
     assert.equal(FakeWorker.instances.length, 2);
+    engine.dispose();
+  } finally { globalThis.Worker = realWorker; }
+});
+
+test('malformed Worker envelopes fail safely and a fresh Worker can execute', async () => {
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakeWorker;
+  try {
+    const malformed = [null, undefined, 1, [], '{}', 'x'.repeat(210001),
+      JSON.stringify({protocolVersion: 1, generation: 1, requestId: 2, op: 'run', payload: {}}),
+      encode(1, 2, 'run', 'unknown', {}),
+      encode(1, 2, 'run', 'result', null)];
+    for (const raw of malformed) {
+      FakeWorker.instances = [];
+      const engine = new EngineController(new URL('file:///fake-worker.js'));
+      await engine.initialize();
+      const worker = FakeWorker.instances[0];
+      const pending = engine.run({source: '1'});
+      worker.onmessage({data: raw, ports: []});
+      assert.equal((await pending).error.code, 'PROTOCOL_ERROR');
+      await engine.initialize();
+      assert.equal(engine.getState(), 'ready');
+      assert.equal(FakeWorker.instances.length, 2);
+      engine.dispose();
+    }
+  } finally { globalThis.Worker = realWorker; }
+});
+
+test('initialization, recovery, and message decode failures have distinct outcomes', async () => {
+  const realWorker = globalThis.Worker;
+  let bootCount = 0;
+  class FailingWorker extends FakeWorker {
+    postMessage(raw) {
+      const message = decode(raw);
+      if (message.type === 'init' && ++bootCount <= 2)
+        queueMicrotask(() => this.onerror?.({preventDefault() {}}));
+      else super.postMessage(raw);
+    }
+  }
+  globalThis.Worker = FailingWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await assert.rejects(engine.initialize(), {code: 'INITIALIZATION_FAILED'});
+    assert.equal(engine.getState(), 'failed');
+    await assert.rejects(engine.reset(), {code: 'INITIALIZATION_FAILED'});
+    await engine.initialize();
+    const worker = FakeWorker.instances.at(-1);
+    const pending = engine.run({source: 'for (;;) {}'});
+    worker.onmessageerror?.({});
+    assert.equal((await pending).error.code, 'WORKER_FAILURE');
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
+    engine.dispose();
+  } finally { globalThis.Worker = realWorker; }
+});
+
+test('recovery boot failure leaves failed state and explicit initialize retries', async () => {
+  const realWorker = globalThis.Worker;
+  let bootCount = 0;
+  class RecoveryFailWorker extends FakeWorker {
+    postMessage(raw) {
+      const message = decode(raw);
+      if (message.type === 'init' && ++bootCount === 2)
+        queueMicrotask(() => this.onerror?.({preventDefault() {}}));
+      else super.postMessage(raw);
+    }
+  }
+  globalThis.Worker = RecoveryFailWorker;
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    await engine.initialize();
+    const pending = engine.run({source: 'for (;;) {}'});
+    await assert.rejects(engine.cancel(), {code: 'RECOVERY_FAILED'});
+    assert.equal((await pending).error.code, 'CANCELLED');
+    assert.equal(engine.getState(), 'failed');
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
     engine.dispose();
   } finally { globalThis.Worker = realWorker; }
 });
