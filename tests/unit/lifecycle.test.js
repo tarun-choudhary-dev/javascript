@@ -161,8 +161,19 @@ test('malformed Worker envelopes fail safely and a fresh Worker can execute', as
   try {
     const malformed = [null, undefined, 1, [], '{}', 'x'.repeat(210001),
       JSON.stringify({protocolVersion: 1, generation: 1, requestId: 2, op: 'run', payload: {}}),
+      encode(0, 2, 'run', 'result', {}),
+      encode(1, 0, 'run', 'result', {}),
+      encode(1, 2, [], 'result', {}),
       encode(1, 2, 'run', 'unknown', {}),
-      encode(1, 2, 'run', 'result', null)];
+      encode(1, 2, 'run', 'result', null),
+      encode(1, 2, 'run', 'stream', {sequence: 1, channel: 'stdout', text: ''}),
+      encode(1, 2, 'run', 'stream', {sequence: 1, channel: 'stdout', text: 'x'.repeat(1025)}),
+      encode(1, 2, 'run', 'result', {status: 'program-error', error: {kind: 'program',
+        name: 'Error', message: 'x'.repeat(2049), stack: null, filename: 'input.js'},
+      truncated: false, lastSequence: 0, stdoutChars: 0, stderrChars: 0}),
+      encode(1, 2, 'run', 'fatal', {code: 'UNKNOWN'}),
+      JSON.stringify({protocolVersion: 1, generation: 1, requestId: 2, op: 'run',
+        type: 'result', payload: {nested: Array(100).fill({invalid: true})}})];
     for (const raw of malformed) {
       FakeWorker.instances = [];
       const engine = new EngineController(new URL('file:///fake-worker.js'));
@@ -313,4 +324,49 @@ test('dispose stays terminal if the Worker termination API throws', async () => 
     formerHandler({data: null, ports: []});
     assert.equal(engine.getState(), 'disposed');
   } finally { globalThis.Worker = realWorker; }
+});
+
+test('initialization and recovery deadlines terminate their Worker and allow explicit retry', async () => {
+  const realWorker = globalThis.Worker;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const timers = [];
+  let suppressBoot = true;
+  class DelayedWorker extends FakeWorker {
+    postMessage(raw) {
+      const message = decode(raw);
+      if (message.type === 'init' && suppressBoot) this.sent.push(message);
+      else super.postMessage(raw);
+    }
+  }
+  globalThis.Worker = DelayedWorker;
+  globalThis.setTimeout = fn => { timers.push(fn); return timers.length; };
+  globalThis.clearTimeout = () => {};
+  FakeWorker.instances = [];
+  try {
+    const engine = new EngineController(new URL('file:///fake-worker.js'));
+    const first = engine.initialize();
+    const initialWorker = FakeWorker.instances.at(-1);
+    timers.at(-1)();
+    await assert.rejects(first, {code: 'INITIALIZATION_TIMEOUT'});
+    assert.equal(initialWorker.terminated, true);
+    assert.equal(engine.getState(), 'failed');
+    suppressBoot = false;
+    await engine.initialize();
+    suppressBoot = true;
+    const replacement = engine.reset();
+    const recoveryWorker = FakeWorker.instances.at(-1);
+    timers.at(-1)();
+    await assert.rejects(replacement, {code: 'RECOVERY_TIMEOUT'});
+    assert.equal(recoveryWorker.terminated, true);
+    assert.equal(engine.getState(), 'failed');
+    suppressBoot = false;
+    await engine.initialize();
+    assert.equal(engine.getState(), 'ready');
+    engine.dispose();
+  } finally {
+    globalThis.Worker = realWorker;
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
 });

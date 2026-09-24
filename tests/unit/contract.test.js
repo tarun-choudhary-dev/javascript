@@ -9,6 +9,10 @@ test('request validation at source and filename boundaries', () => {
   for (const length of [LIMITS.sourceChars - 1, LIMITS.sourceChars])
     assert.equal(validateRequest({source: 'x'.repeat(length)}).source.length, length);
   assert.throws(() => validateRequest({source: 'x'.repeat(LIMITS.sourceChars + 1)}), {code: 'INPUT_LIMIT'});
+  assert.equal(validateRequest({source: '😀'.repeat(LIMITS.sourceChars / 2)}).source.length,
+    LIMITS.sourceChars);
+  assert.throws(() => validateRequest({source: '😀'.repeat(LIMITS.sourceChars / 2) + 'x'}),
+    {code: 'INPUT_LIMIT'});
   for (const length of [LIMITS.filenameChars - 1, LIMITS.filenameChars])
     assert.equal(validateRequest({source: '', filename: 'x'.repeat(length)}).filename.length, length);
   assert.throws(() => validateRequest({source: '', filename: 'x'.repeat(LIMITS.filenameChars + 1)}), {code: 'INPUT_LIMIT'});
@@ -34,4 +38,19 @@ test('wire grammar rejects malformed and contradictory records', () => {
   const accessor = Object.defineProperty({}, 'sequence', {get: undefined, enumerable: true});
   Object.assign(accessor, {channel: 'stdout', text: 'x'});
   assert.equal(validStream(accessor), false);
+});
+
+test('encoded message cap is UTF-16 units and rejects oversized escaped or nested data', () => {
+  const payload = {source: '😀'.repeat(15000), filename: 'x.js', executionBudgetMs: 100};
+  const wire = encode(1, 2, 'run', 'run', payload);
+  assert.ok(wire.length < LIMITS.messageChars);
+  assert.equal(decode(wire).payload.source.length, 30000);
+  assert.throws(() => encode(1, 2, 'run', 'run', {source: '\n'.repeat(110000)}),
+    /message limit/);
+  assert.equal(decode(' '.repeat(LIMITS.messageChars + 1)), null);
+  for (const bad of [
+    'null', '[]',
+    JSON.stringify({protocolVersion: 1, generation: 1, requestId: 1, op: 'run',
+      type: 'result', payload: {nested: {bad: true}}, extra: 1}),
+  ]) assert.equal(decode(bad), null);
 });
