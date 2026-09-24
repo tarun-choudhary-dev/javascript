@@ -12,6 +12,9 @@ const requireProducts = process.argv.includes('--require-products');
 const root = await mkdtemp(join(tmpdir(), 'js-engine-release-'));
 const source = join(root, 'source');
 const consumer = join(root, 'consumer');
+const repeatConsumer = join(root, 'repeat-consumer');
+const firstPack = join(root, 'first-pack');
+const repeatPack = join(root, 'repeat-pack');
 const expectedFiles = ['LICENSE', 'README.md', 'dist/THIRD_PARTY_NOTICES.txt',
   'dist/emscripten-module.wasm', 'dist/index.d.ts', 'dist/index.js', 'dist/package.json',
   'dist/worker.js', 'package.json'].sort();
@@ -30,9 +33,9 @@ function npm(args, cwd, capture = false) {
   });
 }
 
-async function hashes(directory) {
+async function hashes(directory, files = distFiles) {
   const result = {};
-  for (const file of distFiles) {
+  for (const file of files) {
     const bytes = await readFile(join(directory, file));
     result[file] = createHash('sha256').update(bytes).digest('hex');
   }
@@ -136,6 +139,9 @@ async function runContract(browser, base, {label, prefix, pagePath}) {
 try {
   await mkdir(source);
   await mkdir(consumer);
+  await mkdir(repeatConsumer);
+  await mkdir(firstPack);
+  await mkdir(repeatPack);
   for (const file of ['package.json', 'package-lock.json', 'README.md', 'LICENSE'])
     await copyFile(file, join(source, file));
   await cp('src', join(source, 'src'), {recursive: true});
@@ -147,17 +153,35 @@ try {
   await npm(['run', 'build'], source);
   const second = await hashes(source);
   if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error('Repeated build hashes differ');
-  const manifest = JSON.parse(await npm(['pack', '--json', '--pack-destination', root], source, true))[0];
+  const manifest = JSON.parse(await npm(['pack', '--json', '--pack-destination', firstPack], source, true))[0];
   const names = manifest.files.map(file => file.path).sort();
   if (JSON.stringify(names) !== JSON.stringify(expectedFiles) || manifest.bundled?.length)
     throw new Error(`Unexpected packed files: ${JSON.stringify(names)}`);
-  const tarball = join(root, manifest.filename);
+  const firstPackageHashes = await hashes(source, expectedFiles);
+  const repeated = JSON.parse(await npm(['pack', '--json', '--pack-destination', repeatPack], source, true))[0];
+  const repeatedNames = repeated.files.map(file => file.path).sort();
+  if (JSON.stringify(repeatedNames) !== JSON.stringify(expectedFiles) || repeated.bundled?.length)
+    throw new Error(`Unexpected repeated packed files: ${JSON.stringify(repeatedNames)}`);
+  const repeatedPackageHashes = await hashes(source, expectedFiles);
+  if (JSON.stringify(firstPackageHashes) !== JSON.stringify(repeatedPackageHashes))
+    throw new Error('Repeated package contents differ');
+  const tarball = join(firstPack, manifest.filename);
+  const repeatedTarball = join(repeatPack, repeated.filename);
   await npm(['install', '--prefix', consumer, '--omit=dev', '--ignore-scripts', '--no-audit',
     '--no-fund', tarball], source);
+  await npm(['install', '--prefix', repeatConsumer, '--omit=dev', '--ignore-scripts', '--no-audit',
+    '--no-fund', repeatedTarball], source);
   const installed = resolve(consumer, 'node_modules/javascript-browser-engine');
-  const packedHashes = await hashes(installed);
-  if (JSON.stringify(second) !== JSON.stringify(packedHashes))
-    throw new Error('Packed/installed bytes differ from the clean build');
+  const repeatedInstalled = resolve(repeatConsumer, 'node_modules/javascript-browser-engine');
+  const packedHashes = await hashes(installed, expectedFiles);
+  const repeatedInstalledHashes = await hashes(repeatedInstalled, expectedFiles);
+  if (JSON.stringify(firstPackageHashes) !== JSON.stringify(packedHashes) ||
+      JSON.stringify(firstPackageHashes) !== JSON.stringify(repeatedInstalledHashes))
+    throw new Error('Packed/installed package bytes differ from the clean build');
+  const firstArchiveHash = createHash('sha256').update(await readFile(tarball)).digest('hex');
+  const repeatedArchiveHash = createHash('sha256').update(await readFile(repeatedTarball)).digest('hex');
+  if (firstArchiveHash !== repeatedArchiveHash)
+    throw new Error('Repeated tarball bytes differ despite equal package contents');
   const base = await serve();
   const products = [{name: 'Chrome', type: chromium, channel: 'chrome'},
     {name: 'Edge', type: chromium, channel: 'msedge'}];
@@ -187,7 +211,7 @@ try {
       process.stdout.write(`${item.name} ${browser.version()}: 3/3 release-candidate contracts passed\n`);
     } finally { await browser.close(); }
   }
-  process.stdout.write(`Clean repeat build and installed artifact identical: ${Object.keys(second).length} dist files; ${names.length} packed files; ${manifest.size} tarball bytes.\n`);
+  process.stdout.write(`Clean repeat build and two installed archives identical: ${Object.keys(second).length} dist files; ${names.length} packed files; ${manifest.size} tarball bytes; archive SHA-256 ${firstArchiveHash}.\n`);
 } finally {
   if (server) await new Promise(resolvePromise => server.close(resolvePromise));
   const resolvedRoot = await realpath(root);
