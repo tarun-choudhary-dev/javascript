@@ -1,13 +1,33 @@
-# Package installs and generated build output
+# npm dependencies and generated browser package
 node_modules/
 dist/
-coverage/
+
+# Playwright output
 test-results/
 playwright-report/
-*.tsbuildinfo
+blob-report/
+playwright/.cache/
+
+# Local package archives and npm logs
+*.tgz
+npm-debug.log*
+
+# Local environment values; keep the safe example template visible
+.env
+.env.*
+!.env.example
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # Personal agent skills and machine-local skill inventory
 /.agents/
 /.claude/
 /skills-lock.json
 **/SKILL.md
+
+# Ignore Markdown by default; keep only the repository's main README.
+*.md
+!/README.md

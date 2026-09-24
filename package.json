@@ -1,12 +1,30 @@
 {
   "name": "javascript-browser-engine",
-  "version": "0.0.0-stage.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Stage 0 architecture for a reusable browser-based JavaScript execution engine.",
+  "description": "Browser JavaScript execution engine backed by isolated QuickJS/WASM Workers.",
   "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/unit/*.test.js",
+    "test:browser": "playwright test",
+    "test:consumer": "node scripts/test-consumer.mjs",
+    "prepack": "npm run build"
+  },
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/tarun-choudhary-dev/javascript.git"
+  },
+  "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "quickjs-emscripten-core": "0.32.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "esbuild": "0.25.12"
   }
 }
