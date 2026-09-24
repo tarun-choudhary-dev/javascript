@@ -1,6 +1,6 @@
 # Architecture and lifecycle
 
-Status: Stage 0 design, 2026-09-24. Normative statements in this document describe required future behavior; no engine exists yet.
+Status: Stage 0 design refined by the Phase 1 audit, 2026-09-24. Normative statements describe required future behavior; no engine exists yet. See the [component ownership map](architecture/components.md) and [flows, failures, and races](architecture/flows.md) for the concrete internal architecture.
 
 ## Scope and dependency direction
 
@@ -30,7 +30,7 @@ An opaque iframe is not part of the first architecture. A native iframe still ha
 
 ## Runtime and state ownership
 
-One engine owns at most one active dedicated Worker and one admitted run. No queue or worker pool. Independent engines have separate Workers and WASM instances; applications remain responsible for how many engine instances they create.
+One engine owns at most one active dedicated Worker and one admitted run. The host execution controller is the sole owner of the public lifecycle, Worker reference, IDs, and deadlines; the Worker adapter owns the QuickJS module and per-run guest runtime/context. No queue or worker pool. Independent engines have separate Workers and WASM instances; applications remain responsible for how many engine instances they create. [Exact ownership](architecture/components.md#mutable-state-ownership)
 
 `initialize()` boots the Worker, loads trusted runtime assets, validates the runtime/protocol version, and performs a small adapter self-check. A normal run creates a fresh QuickJS runtime and context, installs only the permitted console bridge, executes, normalizes bounded output/error information, and disposes all handles/context/runtime before accepting another run. The Worker and WASM instance may stay warm. No guest variable, modified intrinsic, pending job, or object survives a completed run.
 
@@ -69,7 +69,7 @@ Every unlisted transition is invalid. Public API misuse rejects with an `EngineE
 | `reset()` in `recovering` | Join replacement already in progress; avoids reset storms |
 | `dispose()` in any state | Immediately mark terminal, revoke generation, terminate Worker, clear timers/listeners, settle pending operations; repeated calls are no-ops |
 
-All asynchronous operations after disposal reject `DISPOSED`. Introspection remains available and never returns runtime object references. Calls to `dispose()` itself do not throw due to cleanup errors. `getRuntimeInfo()` returns an immutable snapshot of declared/observed metadata with `initialized: false` once disposed.
+New asynchronous method calls after disposal reject `DISPOSED`; an already admitted run resolves an engine-error result as specified above. Introspection remains available and never returns runtime object references. Calls to `dispose()` itself do not throw due to cleanup errors. `getRuntimeInfo()` returns an immutable snapshot of declared/observed metadata with `initialized: false` once disposed.
 
 For competing result, timeout, cancellation, reset, and dispose events, the controller accepts the first valid terminal decision it processes for the current operation. A result processed at or after its host deadline becomes `EXECUTION_TIMEOUT`, even if the timer task has not fired yet. Once settled, subsequent events cannot rewrite that result. Disposal always makes the *current state* terminal even if an earlier run already completed.
 
@@ -99,7 +99,7 @@ Worker termination is specified to abort running script. It does not offer a com
 | Recovery | Before replacement Worker creation | Entire single replacement attempt | Terminate, reject `RECOVERY_TIMEOUT`, enter `failed` |
 | Analysis | Not present | Future independent request and budget | Must be designed before analysis exists |
 
-Use host monotonic elapsed time for public deadlines/duration. The Worker maintains its own local deadline using the remaining execution budget sent by the controller; never compare absolute `performance.now()` timestamps from different realms. Numeric budgets are centralized and calibrated in Phase 1, as described in [limits](limits.md).
+Use host monotonic elapsed time for public deadlines/duration. The Worker maintains its own local deadline using the remaining execution budget sent by the controller; never compare absolute `performance.now()` timestamps from different realms. The controller alone commits the public timeout outcome and state transition; the Worker interrupt hook is a supplementary signal. Numeric budgets are centralized and calibrated during Phase 2 implementation, as described in [limits](limits.md).
 
 Browsers throttle or suspend timers, and no JavaScript can settle promises while its page/agent is suspended. Thus deadlines are deterministic outcome rules, not real-time guarantees. On resumption, check deadlines before accepting results; terminate expired work at the earliest available host turn. A crashed browser/process is outside the library's recovery guarantee. With a running host event loop, every transitional state has a bounded exit to `ready`, `failed`, or `disposed`.
 

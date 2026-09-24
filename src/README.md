@@ -1,6 +1,6 @@
-# Source ownership planned for Phase 1
+# Source ownership planned for implementation
 
-No runtime code is implemented in Stage 0. Add directories as their first real module is needed; empty directory scaffolds and placeholder classes are intentionally omitted.
+No runtime code is implemented in Stages 0 or 1. Add directories as their first real module is needed in a later implementation phase; empty directory scaffolds and placeholder classes are intentionally omitted. The [Phase 1 ownership audit](../docs/architecture/components.md) defines responsibility without requiring one class per concept.
 
 | Planned location | Owns | Must not own |
 | --- | --- | --- |
@@ -11,6 +11,6 @@ No runtime code is implemented in Stage 0. Add directories as their first real m
 | `security/` | Request/message validation, bounded normalization | A blacklist pretending to sandbox native JavaScript |
 | `limits/` | One policy definition and derived validation constraints | Independently duplicated magic numbers |
 
-Keep modules concrete. A single runtime implementation does not need a plugin system, abstract runtime factory framework, dependency injection container, or runtime registry. Use browser ESM; source typing/build tool selection is a Phase 1 tooling decision. The library must work for plain JavaScript consumers and eventually ship type declarations.
+Keep modules concrete. A single runtime implementation does not need a plugin system, abstract runtime factory framework, dependency injection container, or runtime registry. Use browser ESM; source typing/build tool selection belongs to the implementation phase. The library must work for plain JavaScript consumers and eventually ship type declarations.
 
 See [architecture](../docs/architecture.md), [API](../docs/api.md), and [protocol](../docs/protocol.md) before implementation.

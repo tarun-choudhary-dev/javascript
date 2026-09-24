@@ -81,6 +81,8 @@ See [candidate research and exact provenance](runtime.md). The chosen dependency
 | Known limitations | A compromised native sender can allocate/flood before validation; one engine's budgets do not cap all engines in a tab |
 | Future consequences | Calibrate values for JavaScript in Phase 1; test boundaries and combined limits; protocol changes must update validators and fault-injection tests |
 
+**Wire-shape note, 2026-09-24:** The bounded protocol/policy choice remains. Its Worker engine-error `message` field is removed because the host never uses it; see [ADR-011](#adr-011--omit-unused-worker-engine-error-text). Its Phase 1 numeric calibration expectation is superseded by [ADR-010](#adr-010--phase-1-is-architecture-only).
+
 ## ADR-008 — Separate analysis and honest compatibility
 
 | Item | Record |
@@ -102,3 +104,47 @@ See [candidate research and exact provenance](runtime.md). The chosen dependency
 | Trade-offs | Exact project designation and full compiled-asset notice inventory remain publication gates |
 | Known limitations | Package license metadata alone does not audit WASM support libraries or reproduce binaries |
 | Future consequences | Confirm owner designation and finish artifact-level audit before distribution; add lock/build/test tooling only when Phase 1 is authorized |
+
+**Scheduling note, 2026-09-24:** The Phase 1 request authorizes an architecture audit only. Its implementation timing replaces the earlier Stage 0 expectation that runtime integration, tests, and numeric limit calibration would occur in Phase 1. The licensing decision itself is unchanged. See [ADR-010](#adr-010--phase-1-is-architecture-only).
+
+## Phase 1 review of all Stage 0 decisions
+
+The status below reviews the **design choice**. `CONFIRMED` does not mean its future browser behavior has passed a test. The evidence column separates source/documented behavior from unverified integration. Phase 1 performs no execution experiment.
+
+| Stage 0 decision | Status | Evidence and reason | Impact on current architecture |
+| --- | --- | --- | --- |
+| ADR-001 Engine boundary/browser delivery | CONFIRMED | Stage 0 scope and external-consumer requirement; no contrary evidence | Public facade remains independent of IDE/host UI; static assets only |
+| ADR-002 QuickJS/WASM in Worker | CONFIRMED as candidate; runtime behavior UNVERIFIED | Pinned [binding APIs and variant build](runtime.md#phase-1-runtime-architecture-assessment) document boot, runtime creation, limits; no browser integration yet | Retain exact research pin, require freshness/asset/capability/termination evidence before adoption |
+| ADR-003 Narrow capability boundary/no iframe | CONFIRMED as design; security behavior UNVERIFIED | Embedding removes intentional browser API bridge; no browser escape/network/storage tests | Adapter remains trusted and Worker retains ambient capabilities; [security matrix](security.md#browser-capability-inventory) stays unverified |
+| ADR-004 Fresh runtime/context and synchronous Script | CONFIRMED as contract; cleanup behavior UNVERIFIED | Binding documents runtime/context creation and disposal; pending jobs require explicit pumping | Warm WASM/Worker permitted, guest runtime/context destroyed every clean run; Promise jobs discarded |
+| ADR-005 Hard Worker termination and one recovery | CONFIRMED as design; actual latency UNVERIFIED | [HTML Worker termination algorithm](https://html.spec.whatwg.org/multipage/workers.html#terminate-a-worker) documents script abortion | Controller owns revoke/terminate/recover; one bounded attempt, then failed |
+| ADR-006 Small API and error separation | CONFIRMED as draft; extraction feasibility UNVERIFIED | Public [API](api.md), [failure analysis](architecture/flows.md#failure-mode-matrix) resolve all classes conceptually | Preserve admitted-run results and pre-admission/control rejections; verify bounded guest-error extraction later |
+| ADR-007 Versioned bounded protocol/limits | MODIFIED only for engine-error wire field; throughput/quotas UNVERIFIED | [Message grammar](protocol.md), [ownership](architecture/components.md#mutable-state-ownership), and [limit boundary table](limits.md#boundary-ownership-audited-in-phase-1) | Single immutable policy; Worker and host validate independently; omit unused Worker engine message. See ADR-011 |
+| ADR-008 Separate analysis/honest compatibility | CONFIRMED | No general QuickJS AST API selected; no engine/browser test run | No analysis API or support claim; test matrix remains unverified |
+| ADR-009 Existing license/deferred installs | MODIFIED only for phase scheduling | Existing [LICENSE](../LICENSE) unchanged; new Phase 1 request excludes implementation and package installation | Keep private manifest and dependency audit; move build/lock/testing work to Phase 2. See ADR-010 |
+
+No runtime, isolation, public contract, or licensing decision was silently replaced. The changed schedule and smaller internal wire schema are recorded below; the Stage 0 report remains an immutable historical account of what was recommended at its completion.
+
+## ADR-010 — Phase 1 is architecture only
+
+| Item | Record |
+| --- | --- |
+| Previous decision | Stage 0 report and ADR-009 anticipated runtime proof, dependency/tooling setup, and numerical calibration in Phase 1. |
+| Reason for reconsideration | The new [Phase 1 request](stage-1-report.md#2-stage-0-baseline) explicitly defines an architecture audit and prohibits engine/Worker/QuickJS/API implementation and publishing. |
+| Evidence | User's Phase 1 instruction in this session; repository remains design-only. No new browser/runtime experiment supports changing the runtime choice. |
+| Alternatives considered | Follow Stage 0 timing and build a harness now — conflicts with Phase 1 boundary; defer the whole audit — leaves ownership/races ambiguous. |
+| New decision | Complete concrete ownership, flow, failure, protocol, security, distribution, and test architecture in Phase 1. Move browser validation, dependency adoption, implementation, limit calibration, and distribution tests to Phase 2 prerequisites. |
+| Trade-off | Security and runtime feasibility remain unverified longer; the design is more reviewable before code is written. |
+| Impact | Living docs use Phase 2 for implementation gates; historical Stage 0 report is preserved. This decision does not authorize a particular runtime implementation or publication. |
+
+## ADR-011 — Omit unused Worker engine-error text
+
+| Item | Record |
+| --- | --- |
+| Previous decision | ADR-007's Stage 0 protocol made a Worker `result.error` public-shaped, including an engine-error `message` that the host would ignore and replace. |
+| Reason for reconsideration | A wire field that is neither trusted nor used adds parsing, size, and validation work without helping the public contract. |
+| Evidence | The [public API](api.md#execution-result) needs an engine-authored message; the [Phase 1 error ownership map](architecture/components.md#error-normalizer) assigns infrastructure wording to the host controller. The Stage 0 protocol itself already required the host to ignore Worker text. |
+| Alternatives considered | Keep the bounded ignored field — backward compatible with an unimplemented private draft but unnecessarily redundant; trust Worker wording — would allow guest/adapter text to masquerade as engine diagnosis. |
+| New decision | Worker `engine-error` wire payload is exactly `{kind:"engine",code}`. Host validates code and adds a fixed bounded message to the public `EngineErrorData`. Program errors still carry bounded guest name/message/stack/filename. |
+| Trade-off | Wire error shape differs from public error shape and needs an explicit normalizer; this boundary already exists for stdout/stderr/duration and does not add a public API. |
+| Impact | [Protocol grammar](protocol.md#field-types-sizes-and-failure-ownership) and fault injection must enforce the smaller shape; public API/result model remains unchanged. No current implementation or consumer is broken. |

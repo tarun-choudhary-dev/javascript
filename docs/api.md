@@ -1,6 +1,6 @@
 # Public API draft
 
-Status: Stage 0 contract, not an implementation or stable published release. Consumers use only `JavaScriptEngine`, public data types, and `EngineError`; Workers, QuickJS handles, generations, and protocols are private. Breaking contract changes before the first release must update this document and the decisions log.
+Status: Stage 0 draft retained by the Phase 1 audit, not an implementation or stable published release. Consumers use only `JavaScriptEngine`, public data types, and `EngineError`; Workers, QuickJS handles, generations, and protocols are private. Breaking contract changes before the first release must update this document and the decisions log.
 
 ## Surface
 
@@ -128,7 +128,7 @@ Validation/state failures *before admission* and failed lifecycle operations rej
 | `PROTOCOL_ERROR` | Malformed or impossible current-operation runtime message |
 | `RECOVERY_FAILED` / `RECOVERY_TIMEOUT` | Replacement boot failed / expired |
 
-Guest error names/messages are attacker-controlled and cannot be used to authenticate timeout or cancellation. Prefer controller/hook/allocator evidence for engine limits. The binding does not prove that every memory/stack failure can be distinguished from a guest-created exception: ambiguous integrity/resource failures must conservatively invalidate the runtime and return `RUNTIME_FAILURE`, with a fixed message. Phase 1 must verify this classification; do not label an infrastructure failure `SyntaxError` or `TypeError` merely to fit the result format.
+Guest error names/messages are attacker-controlled and cannot be used to authenticate timeout or cancellation. Prefer controller/hook/allocator evidence for engine limits. The binding does not prove that every memory/stack failure can be distinguished from a guest-created exception: ambiguous integrity/resource failures must conservatively invalidate the runtime and return `RUNTIME_FAILURE`, with a fixed message. Phase 2 must verify this classification; do not label an infrastructure failure `SyntaxError` or `TypeError` merely to fit the result format.
 
 ## Runtime information
 

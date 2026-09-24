@@ -1,6 +1,13 @@
+# Package installs and generated build output
 node_modules/
 dist/
 coverage/
 test-results/
 playwright-report/
 *.tsbuildinfo
+
+# Personal agent skills and machine-local skill inventory
+/.agents/
+/.claude/
+/skills-lock.json
+**/SKILL.md

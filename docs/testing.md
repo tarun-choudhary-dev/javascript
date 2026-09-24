@@ -1,6 +1,6 @@
 # Testing and browser compatibility strategy
 
-Status: Stage 0 plan. There is no engine implementation, test suite, distribution, or tested browser yet. Documentary/package integrity checks are not runtime security tests.
+Status: Stage 0 plan refined by the Phase 1 architecture audit. There is no engine implementation, test suite, distribution, or tested browser yet. Documentary/package integrity checks are not runtime security tests. Phase 1 defines acceptance evidence; Phase 2 builds and runs the suites.
 
 ## Layered tests
 
@@ -50,7 +50,7 @@ Run one behavioral contract suite against two adapters: a development/source ent
 | Analysis | Confirm absent initially | Confirm absent initially |
 | Future analysis feature, when added | Same feature suite | Same feature suite |
 
-Phase 1 should introduce a reproducible build and exact lockfile before installing a test/bundler stack. Build only from the current sources and pinned dependencies, record artifact hashes, and run package-content checks. CI must fail on missing WASM, accidentally exposed source-only imports, absent notices, or source/build behavior divergence.
+Phase 2 should introduce a reproducible build and exact lockfile before installing a test/bundler stack. Build only from the current sources and pinned dependencies, record artifact hashes, and run package-content checks. CI must fail on missing WASM, accidentally exposed source-only imports, absent notices, or source/build behavior divergence.
 
 ## External consumer procedure
 
@@ -65,6 +65,20 @@ Phase 1 should introduce a reproducible build and exact lockfile before installi
 A local static test server and network receiver are development tools, not custom backends required by consumers.
 
 ## Browser matrix
+
+Minimum capabilities for the **proposed** distribution, independent of any support claim:
+
+| Browser capability | Required? | Architectural role and evidence status |
+| --- | --- | --- |
+| Dedicated **module** Worker and private message events | Yes | Runs trusted adapter off the UI thread and permits owner termination; selected bundle behavior `UNVERIFIED` |
+| WebAssembly compile/instantiate and the selected glue's typed-array/BigInt/TextDecoder primitives | Yes | Initializes QuickJS binary in Worker; exact browser requirements `UNVERIFIED` until production bundle inspection |
+| Static HTTP(S) delivery of ESM Worker, imported modules, and WASM with compatible MIME/origin | Yes | Fixed package-relative asset graph; nested paths and redirects `UNVERIFIED` |
+| CSP that permits Worker/module loading and WASM compilation | Conditional on host policy | Must be tested with the actual worker response and page policies; no broad `unsafe-eval` assumed |
+| Browser fetch/XHR used by trusted WASM glue | Asset-loader dependent | Inspected glue uses fetch and may fall back; actual request graph/credentials `UNVERIFIED` |
+| Blob URLs / MessageChannel / iframe sandbox | No initial requirement | No blob/frame broker or MessageChannel in the chosen protocol; future change needs new tests |
+| SharedArrayBuffer / COOP / COEP | No initial requirement | Single-threaded selected variant; exact output graph still requires confirmation |
+
+The Worker entry is expected to be served from the application origin under the [Worker constructor's origin rules](https://developer.mozilla.org/en-US/docs/Web/API/Worker/Worker). This does not itself isolate the trusted Worker from host-origin network/storage authority.
 
 Status definitions:
 
@@ -88,8 +102,20 @@ Status definitions:
 
 Initially target current stable desktop versions; add prior versions/mobile only from measured evidence. Record exact builds, not “latest”. Test automation Chromium/Firefox/WebKit can broaden coverage but cannot substantiate product-specific Safari/Edge claims alone. Any future iframe architecture adds an explicit iframe/origin/CSP test column and resets affected verification status.
 
-Each tested row must include WebAssembly compile/instantiate behavior, Worker creation, import/glue compatibility, CSP headers, asset MIME/URLs, network graph, capability results, cancellation latency, cold/warm initialization, background-tab timing, memory behavior, and known issues. There is no supported-browser badge in Stage 0.
+Each tested row must include WebAssembly compile/instantiate behavior, Worker creation, import/glue compatibility, CSP headers, asset MIME/URLs, network graph, capability results, cancellation latency, cold/warm initialization, background-tab timing, memory behavior, and known issues. No browser receives a support badge from the Phase 1 architecture audit.
 
-## Phase 1 verification order
+## Phase 2 verification order and acceptance evidence
 
 First prove the chosen artifact loads in a dedicated Worker and the guest cannot reach browser capabilities. Then prove hard termination and fresh recovery, then implement the minimum API with correct errors and ownership. Calibrate limits before exposing untrusted workloads. Finish source/build and external-consumer parity before calling the first implementation reusable. Failures of these premises require an architectural decision update, not a native-execution fallback.
+
+| Evidence gate | Required artifact/evidence | What it establishes |
+| --- | --- | --- |
+| Runtime bootstrap | Exact lockfile, Worker/WASM asset graph, cold/warm boot traces, matching runtime/policy metadata | Selected binary can initialize inside a Worker under intended deployment; failed boot is bounded |
+| Guest capability boundary | Capability matrix with direct/prototype/eval probes plus DOM/storage/network canaries and receiver logs | Actual guest access for each forbidden/allowed API, not just source inspection |
+| Hard cancellation and recovery | Infinite loop and memory pressure fixtures; Worker identity changes, no old messages accepted, fresh run succeeds | Cancel/timeout terminate old execution and restore a usable generation where browser survives |
+| Lifecycle/protocol | Deterministic race/fault injection mapped to [race/failure matrices](architecture/flows.md#race-condition-matrix) and [protocol outcomes](protocol.md#invalid-duplicate-and-late-message-outcomes) | Exactly-once settlement, stale-response immunity, finite failure exits |
+| Limits and output | Calibrated `LIMITS` values, boundary cases, FFI string extraction evidence, memory measurements | Public resource policy is enforceable by the selected adapter on target devices |
+| Distribution/license | Fresh build and packed artifact, manifest/hashes, notices/SBOM, nested-path/CSP/MIME checks | Source/package parity and complete runtime asset/license delivery |
+| Independent consumer | Temporary external project installing tarball only, exercising public API and security suite | Applications need no repository-local alias or runtime internals |
+
+No fixture or package is created in Phase 1. The [browser matrix](#browser-matrix) remains `UNVERIFIED`; a source-level expectation does not upgrade it to `TESTED`.

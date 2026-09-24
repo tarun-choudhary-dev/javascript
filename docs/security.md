@@ -1,6 +1,6 @@
 # Security boundary and threat model
 
-Status: Stage 0 design. **No browser security tests have been executed.** Statements marked as policy are requirements, not demonstrated guarantees. Source inspection supports the architecture; only the tests in [testing](testing.md) can establish observed behavior of this engine's eventual distribution.
+Status: Stage 0 threat model refined by the Phase 1 architecture audit. **No browser security tests have been executed.** Statements marked as policy are requirements, not demonstrated guarantees. Source inspection supports the architecture; only the tests in [testing](testing.md) can establish observed behavior of this engine's eventual distribution.
 
 ## Trust and assets
 
@@ -40,13 +40,13 @@ Network/storage absence follows from the embedded environment plus the bridge al
 
 **HOST-SIDE RUNTIME ACQUISITION** means trusted engine/bootstrap code, even when running in the Worker. It may load the engine ESM graph, Worker bundle, and one pinned WASM asset from the consumer's static deployment. The published 0.32.0 browser glue uses same-origin credentials for WASM fetch, supports streaming-to-buffer fallback, and has a synchronous-XHR fallback path. Cookies may therefore accompany same-origin asset requests. Failed loading may retry; these are not guest-originated requests. [Audited package metadata and artifact location](https://registry.npmjs.org/@jitl/quickjs-wasmfile-release-sync/0.32.0)
 
-Phase 1 must restrict runtime URLs to engine-owned package-relative assets, bound loading by the initialization/recovery deadline, and record the complete request/redirect graph. Never send source, filenames, output, or other guest-derived text in runtime URLs or telemetry. The engine has no telemetry feature. CDN delivery is not the default. If the consumer's origin or Service Worker substitutes assets, it is part of the trusted delivery environment.
+The Phase 1 architecture fixes runtime URLs to engine-owned package-relative assets and includes loading within the initialization/recovery deadline. Phase 2 must verify and record the complete request/redirect graph. Never send source, filenames, output, or other guest-derived text in runtime URLs or telemetry. The engine has no telemetry feature. CDN delivery is not the default. If the consumer's origin or Service Worker substitutes assets, it is part of the trusted delivery environment.
 
 **USER PROGRAM EXECUTION** receives no fetch, XHR, WebSocket, WebRTC, image/DOM loader, import loader, or Worker creation bridge. The intended answer to “can guest JavaScript access the network?” is **no provided capability**. The actual engine behavior is **UNVERIFIED** until browser tests demonstrate no observable guest-triggered network effects. QuickJS dynamic imports must fail locally with no loader; nested eval/Function must not recover a browser loader.
 
 The adapter's ambient network authority remains a residual risk. A restrictive worker-response CSP can reduce it; CSP on a document does not automatically impose every desired policy on a separately fetched Worker. `worker-src` controls worker loading; `connect-src` controls relevant connection APIs; WebAssembly compilation has its own script policy considerations. Do not call a CSP deployment secure because one fetch attempt failed. [CSP Worker loading](https://www.w3.org/TR/CSP3/#directive-worker-src), [connection policy](https://www.w3.org/TR/CSP3/#directive-connect-src), [WASM compilation checks](https://www.w3.org/TR/CSP3/#can-compile-wasm-bytes)
 
-The Phase 1 CSP fixture must allow only the intended library/Worker assets and the tested WASM compilation policy (normally `wasm-unsafe-eval` where required/supported), without broad `unsafe-eval`. A Worker-response policy must account for WASM acquisition. Record the actual working policy and negative tests before publishing a deployment recipe. There is no iframe/blob bootstrap in this design and no requirement for SharedArrayBuffer, COOP, or COEP for the selected single-threaded profile; confirm the actual binary does not add one.
+The Phase 2 CSP fixture must allow only the intended library/Worker assets and the tested WASM compilation policy (normally `wasm-unsafe-eval` where required/supported), without broad `unsafe-eval`. A Worker-response policy must account for WASM acquisition. Record the actual working policy and negative tests before publishing a deployment recipe. There is no iframe/blob bootstrap in this design and no requirement for SharedArrayBuffer, COOP, or COEP for the selected single-threaded profile; confirm the actual binary does not add one.
 
 ## Storage model
 
@@ -56,40 +56,40 @@ The trusted Worker may have IndexedDB/Cache Storage access by platform exposure,
 
 ## Browser capability inventory
 
-All guest results in this table are **intended / UNVERIFIED**. “Absent” means not installed into the QuickJS guest; it does not claim the surrounding Worker lacks that feature. Feature availability in native workers varies by browser and context; tests record that separately.
+Each “actual/status” cell is **UNVERIFIED** because no guest program has run in a browser in this project. “Absent” is the **PROPOSED** QuickJS guest policy; it does not claim the surrounding trusted Worker lacks the feature. `VERIFIED`, `BLOCKED`, or `CONDITIONALLY AVAILABLE` require recorded browser evidence. `ALLOWED` below is only the intended capability policy.
 
-| Capability / names | Guest policy | Required probe |
-| --- | --- | --- |
-| DOM | Absent | No host/own DOM mutation; host element canary unchanged |
-| `window` | Absent | Direct, global property, eval, and constructor-chain lookup |
-| `document` | Absent | DOM and cookie lookup attempts |
-| `parent`, `top`, `opener` | Absent | Nested lookup/navigation/message attempts cannot reach host |
-| `globalThis` | Guest-only object | Built-in constructor chains return guest environment |
-| `self`, `location`, `navigator` | Absent | No Worker/browser global references or host URL/device info |
-| `localStorage` | Absent | Read/write host canary and check no changes |
-| `sessionStorage` | Absent | Same, including another same-origin tab fixture |
-| `indexedDB` | Absent | Host database canary remains unchanged |
-| `caches` / Cache Storage | Absent | No guest cache access or new entries |
-| Cookies / `document.cookie` / Cookie Store | Absent | No guest read/write; distinguish asset request cookie headers |
-| `fetch`, XMLHttpRequest, EventSource, beacon | Absent | Instrument HTTP receiver and browser request log |
-| `WebSocket`, WebTransport | Absent | No handshake/connection observed |
-| WebRTC / `RTCPeerConnection` | Absent | No guest ICE/network channel or related object |
-| Service Workers | Absent | No registration, control, or message to host registration |
-| `Worker`, `SharedWorker` | Absent | No nested browser workers or external code loading |
-| `BroadcastChannel` | Absent | Same-origin peer receives no guest message |
-| `postMessage`, `MessageChannel`, `MessagePort` | Absent | Guest cannot invoke real transport or forge ready/results |
-| `importScripts`, static/dynamic imports | No loader; module syntax unsupported | HTTP receiver stays silent, including dynamic imports inside eval |
-| Clipboard | Absent | No clipboard object, operation, or permission request |
-| Geolocation | Absent | No location object, read, or prompt |
-| Camera / microphone / media devices | Absent | No device enumeration, capture, or permission request |
-| USB / serial / HID | Absent | No device object, connection, or chooser |
-| Notifications / Push | Absent | No prompt, registration, or delivered notification |
-| `setTimeout`, `setInterval`, animation scheduling | Absent | No asynchronous host callback is created |
-| SharedArrayBuffer / Atomics | No host shared memory bridge | No shared host buffers; audit guest intrinsic presence separately |
-| `WebAssembly` | No browser WASM API installed | Guest cannot instantiate host modules or see adapter memory |
-| `console` | Explicit bounded bridge | Methods reveal no native function/global handles |
-| `eval`, `Function`, Promise, Date, Math | Guest language intrinsics | Guest-only authority; Promise jobs not scheduled; time/randomness not deterministic |
-| `process`, `require`, QuickJS `std` / `os` | Absent | No Node or qjs CLI standard-library/module exposure |
+| Capability / names | Expected guest policy | Actual behavior / status | Required verification method |
+| --- | --- | --- | --- |
+| DOM | Absent | UNVERIFIED | Host DOM canary and own-document access probes |
+| `window` | Absent | UNVERIFIED | Direct, global-property, eval, constructor-chain lookup |
+| `document` | Absent | UNVERIFIED | DOM and cookie lookup attempts |
+| `parent`, `top`, `opener` | Absent | UNVERIFIED | Nested lookup/navigation/message attempts cannot reach host |
+| `globalThis` | ALLOWED: guest-only object | UNVERIFIED | Built-in constructor chains return guest environment |
+| `self`, `location`, `navigator` | Absent | UNVERIFIED | No Worker/browser global references or host URL/device info |
+| `localStorage` | Absent | UNVERIFIED | Host canary read/write attempts and comparison |
+| `sessionStorage` | Absent | UNVERIFIED | Same, including another same-origin tab fixture |
+| `indexedDB` | Absent | UNVERIFIED | Host database canary remains unchanged |
+| `caches` / Cache Storage | Absent | UNVERIFIED | No guest cache access or new entries |
+| Cookies / `document.cookie` / Cookie Store | Absent | UNVERIFIED | No guest read/write; separately observe asset request cookie headers |
+| `fetch`, XMLHttpRequest, EventSource, beacon | Absent | UNVERIFIED | HTTP receiver and browser request log, including failed CORS requests |
+| `WebSocket`, WebTransport | Absent | UNVERIFIED | No handshake/connection observed |
+| WebRTC / `RTCPeerConnection` | Absent | UNVERIFIED | No guest ICE/network channel or related object |
+| Service Workers | Absent | UNVERIFIED | No registration, control, or message to host registration |
+| `Worker`, `SharedWorker` | Absent | UNVERIFIED | No nested browser workers or external code loading |
+| `BroadcastChannel` | Absent | UNVERIFIED | Same-origin peer receives no guest message |
+| `postMessage`, `MessageChannel`, `MessagePort` | Absent | UNVERIFIED | Guest cannot invoke real transport or forge ready/results |
+| `importScripts`, static/dynamic imports | No loader; module syntax unsupported | UNVERIFIED | HTTP receiver stays silent, including dynamic imports inside eval |
+| Clipboard | Absent | UNVERIFIED | No clipboard object, operation, or permission request |
+| Geolocation | Absent | UNVERIFIED | No location object, read, or prompt |
+| Camera / microphone / media devices | Absent | UNVERIFIED | No device enumeration, capture, or permission request |
+| USB / serial / HID | Absent | UNVERIFIED | No device object, connection, or chooser |
+| Notifications / Push | Absent | UNVERIFIED | No prompt, registration, or delivered notification |
+| `setTimeout`, `setInterval`, animation scheduling | Absent | UNVERIFIED | No asynchronous host callback is created |
+| SharedArrayBuffer / Atomics | No host shared-memory bridge | UNVERIFIED | No shared host buffers; audit guest intrinsic presence separately |
+| `WebAssembly` | No browser WASM API installed | UNVERIFIED | Guest cannot instantiate host modules or see adapter memory |
+| `console` | ALLOWED: bounded bridge | UNVERIFIED | Methods reveal no native function/global handles |
+| `eval`, `Function`, Promise, Date, Math | ALLOWED: guest language intrinsics | UNVERIFIED | Guest-only authority; Promise jobs not scheduled; time/randomness not deterministic |
+| `process`, `require`, QuickJS `std` / `os` | Absent | UNVERIFIED | No Node or qjs CLI standard-library/module exposure |
 
 Test property enumeration and behavior, not only `typeof` checks. Repeat via prototype/constructor chains, getters, thrown objects, and modified built-ins. Unsupported names that happen to exist in the pinned runtime must trigger review instead of being explained away after the fact. Every dependency/bridge change requires re-running this inventory.
 
@@ -105,3 +105,11 @@ Test property enumeration and behavior, not only `typeof` checks. Repeat via pro
 | Browser/CSP compatibility | No engine tested | [Browser matrix](testing.md#browser-matrix) with exact builds and policies |
 
 The security goal is bounded, capability-restricted execution under this threat model. It is not perfect isolation, deterministic program output, secure erasure, strict real-time scheduling, or containment of arbitrary browser/process compromise.
+
+## Resource-exhaustion audit
+
+`while (true) {}` is expected to occupy the Worker/QuickJS interpreter. The QuickJS interrupt hook may return at its local deadline; the host controller's independent watchdog must revoke and call `Worker.terminate()` even if the Worker never responds. If the browser host event loop is running, the engine then makes one bounded recovery attempt. The HTML Worker termination algorithm is **DOCUMENTED** to abort running script; this exact integration and cancellation latency are **UNVERIFIED**. A suspended tab can delay the host timer.
+
+`const x = []; while (true) { x.push(new Array(1000000)); }` attacks memory and CPU simultaneously. QuickJS `setMemoryLimit` and `setMaxStackSize` are **DOCUMENTED** runtime controls, but wrapper objects, WASM growth, queued messages, browser process memory, and host-side string copies sit outside that guest allocator budget. Allocation could exhaust the tab/process before a timeout callback runs. The plan is to set guest limits before evaluation, bound input/output/message/work, then terminate/recreate on trusted limit/trap evidence. Whether those controls prevent visible tab damage on target devices is **UNVERIFIED**. Do not promise a hard tab memory ceiling, instant recovery, or that timeouts alone solve memory exhaustion.
+
+The browser process, scheduler, and host application count of engine instances remain outside an individual engine's resource quota. A host may need its own policy for concurrent engine instances. [Limit ownership and calibration](limits.md), [later stress acceptance](testing.md#required-scenarios)

@@ -1,8 +1,8 @@
 # Resource policy and enforcement
 
-Status: Stage 0 categories and enforcement contract. **Numeric production defaults are deliberately not chosen yet.** They require measurements of this JavaScript runtime on representative browsers/devices. No values are copied from another language engine.
+Status: Stage 0 categories refined by the Phase 1 audit. **Numeric production defaults are deliberately not chosen yet.** They require measurements of this JavaScript runtime on representative browsers/devices in Phase 2. No values are copied from another language engine.
 
-Phase 1 must define one immutable internal `LIMITS` policy in `src/limits/`, share/derive its constraints for host and Worker, version it in the handshake, and expose effective values through `getRuntimeInfo()`. Do not scatter limits or let the guest replace the policy. `run.timeoutMs` is the only initial per-run override, bounded by that policy.
+Phase 2 must define one immutable internal `LIMITS` policy in `src/limits/`, share/derive its constraints for host and Worker, version it in the handshake, and expose effective values through `getRuntimeInfo()`. The host controller is the authority for admitted limits and public timeout outcomes; the adapter receives only a checked copy and maintains its own work counters. Do not scatter limits or let the guest replace the policy. `run.timeoutMs` is the only initial per-run override, bounded by that policy.
 
 ## Categories
 
@@ -17,6 +17,7 @@ Phase 1 must define one immutable internal `LIMITS` policy in `src/limits/`, sha
 | `errorNameChars` / `errorMessageChars` / `errorStackChars` | Maximum normalized field lengths | Inside guest/adapter before host copying; host rechecks | Bounded fallback or prefix; set `truncated` if text omitted |
 | `resultChars` | Maximum JSON-encoded public result, UTF-16 units | Adapter field budgets and final host construction | Engine-authored bounded failure if invariant violated |
 | `messageChars` | Maximum JSON wire string length before parsing | Every sender/receiver | Reject input or invalidate malformed/oversized active response |
+| `runtimeInfoChars` | Per-field Worker version/variant/profile/policy metadata length | Bootstrap adapter and host | Initialization/protocol failure for oversized or mismatched metadata |
 | `streamChunkChars` | Per-chunk text maximum | Bridge/adapter and host | Split bounded text into finite chunks |
 | `streamMessageCount` | Maximum chunks accepted/sent per run | Adapter and host | Trusted quota violation ends run; no unbounded queue |
 | `guestHeapBytes` | QuickJS allocator budget | Runtime before source allocation/evaluation | Resource failure or conservative `RUNTIME_FAILURE`, invalidate |
@@ -40,9 +41,11 @@ Choose chunk size/count so all allowed retained output fits with bounded overhea
 
 Guest strings and arrays may be huge even when source is small. Slice/limit guest text before copying to host JavaScript; do not copy a full string then call `.slice()` on the host. Avoid recursive `dump`, `JSON.stringify` of guest values, inspecting properties, or calling custom conversion hooks for console output. Bounded guest helper operations use captured trusted intrinsics and stay under the same execution deadline; guest modifications must not bypass them.
 
+Guest `eval` and `Function` can construct and execute code much larger than the admitted source string. `sourceChars` only limits the submitted request; it is not a cap on all dynamically generated guest code. The QuickJS heap/stack controls and host execution deadline must cover such expansion. Likewise, a short source can allocate huge strings/arrays, so early input rejection and runtime resource controls solve different problems.
+
 Formatting errors and hostile error getters are execution work. Hard termination remains available if a formatter or conversion loops. All QuickJS handles need explicit ownership and disposal, including exception and temporary formatting handles. Cleanup is not allowed to hold the run in `busy` forever.
 
-`setMemoryLimit` constrains QuickJS allocations, not all WASM linear memory, wrapper strings, message queues, code assets, the tab, or GPU/browser allocations. `setMaxStackSize` differs from the build-time WASM stack. The published build allows memory growth; Phase 1 must measure initial/high-water memory and determine whether a compatible WASM maximum adds useful protection. Do not advertise a hard total-memory quota without such evidence. Whole-Worker replacement releases ownership of the instance, but browser reclamation timing is not controlled by this library.
+`setMemoryLimit` constrains QuickJS allocations, not all WASM linear memory, wrapper strings, message queues, code assets, the tab, or GPU/browser allocations. `setMaxStackSize` differs from the build-time WASM stack. The published build allows memory growth; Phase 2 must measure initial/high-water memory and determine whether a compatible WASM maximum adds useful protection. Do not advertise a hard total-memory quota without such evidence. Whole-Worker replacement releases ownership of the instance, but browser reclamation timing is not controlled by this library.
 
 ## Boundary verification and calibration
 
@@ -50,4 +53,19 @@ For each numeric input/text limit test `limit - 1`, `limit`, `limit + 1`, plus z
 
 For heap/stack/time budgets, exact byte/instruction boundaries are runtime-dependent: test the control's configured boundary with instrumentation where available, then just-below/above workloads and real cancellation/recovery. Fake clocks validate controller ordering; real browsers validate actual termination and throttling. Test limit interactions, not just isolated fields.
 
-Select initial values only after measuring baseline allocation, representative educational scripts, recursion, regex/JSON work, startup on cold/warm cache, and console overhead across target devices. Record measured evidence, safety margin, and rationale per value. Unknown values are a Phase 1 calibration gate, not permission to run with unlimited defaults.
+Select initial values only after measuring baseline allocation, representative educational scripts, recursion, regex/JSON work, startup on cold/warm cache, and console overhead across target devices. Record measured evidence, safety margin, and rationale per value. Unknown values are a Phase 2 calibration gate, not permission to run with unlimited defaults.
+
+## Boundary ownership audited in Phase 1
+
+| Boundary | Reject/check before crossing | Authoritative owner | Secondary check and breach action |
+| --- | --- | --- | --- |
+| Host application -> engine | Request shape, source/label length, timeout range; no coercion | Pure host validator using controller's immutable policy | Worker repeats exact wire/policy validation; invalid public input rejected without admission |
+| Host -> Worker | Derive safe encoded size before JSON/post; assign current ID/generation/deadline | Host controller | Worker checks `messageChars`, schema, policy version, ID, source/label/budget; current fault fails boot/run |
+| Worker -> QuickJS | Set heap/stack/interruption before guest source allocation/eval; no loader/extra bridge | Trusted adapter | Host execution watchdog terminates even if Worker is blocked; allocator failure invalidates |
+| Guest -> console bridge | Limit argument count, primitive formatting, text copied across FFI, call work, channel/combined output | Adapter per-run counters | Host validates stream chunks/count/totals; violation `PROTOCOL_ERROR`/termination |
+| Worker -> host | Chunk and total sizes, error text, metadata, message count and JSON length | Adapter | Host rechecks all fields before append/normalization; malformed current response invalidates |
+| Host -> consumer | Result/error field and aggregate size, host duration | Controller/result normalizer | If invariants fail, return bounded engine failure and invalidate Worker |
+
+The policy is selected once per engine generation; the Worker receives a validated copy and cannot increase its own effective limits by sending metadata. The host is the sole public timeout/state authority. The QuickJS interrupt hook enforces a local budget inside synchronous evaluation and reports a cause; it does not own the terminal result. Only source/filename/request shape can be rejected before admission; output/heap/time breaches occur after admission and use an engine-error result plus appropriate invalidation.
+
+The two exhaustion examples in [security](security.md#resource-exhaustion-audit) show why limits are layered. A guest heap cap can be exhausted before the host timeout; the host watchdog can fire while the Worker is blocked; neither caps all browser/process allocations. Multiple engine instances add their budgets at application level. Numeric policy values and feasible guest-side string extraction are **UNVERIFIED** Phase 2 gates.

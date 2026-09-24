@@ -1,6 +1,6 @@
-# Test ownership planned for Phase 1
+# Test ownership planned for implementation
 
-Stage 0 contains a test strategy, not passing runtime tests. The security claims are unverified until the [testing plan](../docs/testing.md) is executed.
+Stages 0 and 1 contain a test architecture, not passing runtime tests. The security claims are unverified until the [testing plan](../docs/testing.md) is executed in a later phase.
 
 Create suites when their subject exists:
 

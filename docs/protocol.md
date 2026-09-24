@@ -1,6 +1,6 @@
 # Internal message protocol draft
 
-Status: Stage 0. Private protocol version `1`; it is not a consumer API and has no implementation yet. No generic messaging abstraction or iframe broker is required.
+Status: Stage 0 draft refined by the Phase 1 architecture audit. Private protocol version `1`; it is not a consumer API and has no implementation yet. No generic messaging abstraction or iframe broker is required.
 
 ## Transport and envelope
 
@@ -29,16 +29,34 @@ Both counters increase without reuse for the lifetime of an engine. A new Worker
 | Worker -> host | `ready` / `initialize` | `runtimeName`, `runtimeVersion`, `bindingVersion`, `variant`, `executionProfile`, `policyVersion` bounded strings matching expected manifest |
 | Host -> Worker | `run` / `run` | `source`, `filename` strings; `executionBudgetMs` positive safe integer no larger than accepted host budget |
 | Worker -> host | `stream` / `run` | `sequence` positive safe integer; `channel` exactly `stdout` or `stderr`; `text` nonempty bounded string |
-| Worker -> host | `result` / `run` | `status` enum `ok`, `program-error`, or `engine-error`; `error` bounded public-shaped error or null; `truncated` boolean; `lastSequence`, `stdoutChars`, `stderrChars` nonnegative safe integers |
+| Worker -> host | `result` / `run` | `status` enum `ok`, `program-error`, or `engine-error`; `error` bounded wire error or null; `truncated` boolean; `lastSequence`, `stdoutChars`, `stderrChars` nonnegative safe integers |
 | Worker -> host | `fatal` / current op | `code` restricted engine enum (`INITIALIZATION_FAILED`, `RESOURCE_LIMIT`, `RUNTIME_FAILURE`, `PROTOCOL_ERROR`); no raw error object or stack |
 
 The result schema follows [API invariants](api.md#execution-result). Host accumulates accepted stream chunks, calculates duration itself, and constructs stdout/stderr; it does not accept duplicated output strings in `result`. `lastSequence` and channel character totals must exactly match accepted chunks. The final message is sent only after guest cleanup succeeds. Resource/time hook failures are reported as engine outcomes and always invalidate the Worker, even if it happens to respond.
 
-Worker `engine-error` results may contain only `EXECUTION_TIMEOUT`, `RESOURCE_LIMIT`, or `RUNTIME_FAILURE`; cancellation/reset/disposal originate in the controller. The controller supplies the public engine-error message from its own bounded templates rather than trusting Worker error text. Program error fields remain bounded untrusted data; the reported filename must match the admitted diagnostic label.
+Worker `engine-error` results may contain only `EXECUTION_TIMEOUT`, `RESOURCE_LIMIT`, or `RUNTIME_FAILURE`; cancellation/reset/disposal originate in the controller. An engine-error wire payload contains only `{kind:"engine",code}`. The controller supplies the public engine-error message from its own bounded templates, with no unused Worker-authored message field. Program error fields remain bounded untrusted data; the reported filename must match the admitted diagnostic label. This is a Phase 1 refinement to ADR-007; the public [API result](api.md#execution-result) still has an engine-authored message.
 
 No public `stream` callback exists yet. Internal chunks let the controller preserve output before timeout/cancellation. Chunk size, total text, number of messages, and console-call work are bounded; do not post one unbounded message per log call. A zero-output program emits no stream messages.
 
 `fatal` during module-load failure may never be possible because the adapter has not started; the host also handles Worker errors and boot timeout. An idle Worker fault is detected through Worker error/messageerror; there is no unauthenticated unsolicited ready/fatal state transition.
+
+## Field types, sizes, and failure ownership
+
+No payload field is optional in version 1. Public optional request fields are resolved to concrete validated values **before** the host sends `run`. No wire array, binary buffer, native Error, arbitrary nested value, or additional key is allowed. All string lengths are UTF-16 code units; use the central [limit keys](limits.md#categories), not independent protocol constants.
+
+| Message | Required field types | Size/range policy | On invalid current-operation message |
+| --- | --- | --- | --- |
+| Common envelope | `protocolVersion` literal integer `1`; `generation`, `requestId` positive safe integers; `op`, `type` exact enum strings; `payload` exact plain record | Whole JSON string `<= messageChars`; exact six envelope keys | Host: `PROTOCOL_ERROR`/invalidate or boot failure; Worker: `fatal` if able, otherwise host watchdog handles it |
+| `init` host -> Worker | `policyVersion` bounded string; `limits` fixed flat record of positive safe integer values defined by policy | `policyVersion <= runtimeInfoChars`; numeric policy validated and hash/version matched by Worker | Worker cannot mark ready; host boot fails and partial Worker is terminated |
+| `ready` Worker -> host | Six bounded strings: `runtimeName`, `runtimeVersion`, `bindingVersion`, `variant`, `executionProfile`, `policyVersion` | Each `<= runtimeInfoChars`; expected manifest/profile/policy equality; boot ID/generation exact | Boot fails; terminate partial Worker, enter `failed` or fail current recovery |
+| `run` host -> Worker | `source`, `filename` strings; `executionBudgetMs` positive safe integer | Source/filename admission limits plus wire budget; budget no larger than current host allowance | Worker must not create guest; host treats response/silence as infrastructure failure |
+| `stream` Worker -> host | `sequence` positive safe integer; `channel` exact enum; `text` nonempty string | `text <= streamChunkChars`; total and count within stdout/stderr/combined/message quotas; sequence exactly prior + 1 | Active run `PROTOCOL_ERROR`, terminate/recover; no unvalidated append |
+| `result` Worker -> host | `status` enum; `error` null or exact bounded tagged record; `truncated` boolean; `lastSequence`, `stdoutChars`, `stderrChars` nonnegative safe integers | Error name/message/stack/label each field cap; result/message caps; totals exactly accepted chunks; status/error invariant | Active run `PROTOCOL_ERROR`, terminate/recover; never resolve with received object |
+| `fatal` Worker -> host | `code` one of four documented engine codes; no guest text | Whole message cap and exact current boot/run identity | Treat as infrastructure failure, terminate; host maps public code from trusted template |
+
+For a program error, `error` has exactly `{kind:"program",name,message,stack,filename}` with bounded strings, `stack` string or null, and `filename` identical to the admitted label. For a Worker-authored engine result, `error` has exactly `{kind:"engine",code}`; the host validates the allowed code and constructs its own bounded public message. `ok` has null error. A Worker may not report `CANCELLED`, `RESET`, `DISPOSED`, or `WORKER_FAILURE`, because those are host-observed/controller decisions. `durationMs`, `stdout`, and `stderr` are never accepted from the Worker as final public fields.
+
+The `limits` record must use exactly the named policy fields and an agreed version/hash; this is not an arbitrary user-supplied configuration object. Bootstrap and result caps must be derived so the largest valid payload can fit `messageChars`; [policy consistency](limits.md#policy-consistency) is an initialization gate. Unknown numeric values, negative values, `NaN`/infinity (not valid JSON numbers), strings where numbers are expected, and all arrays/nested objects beyond the exact schema fail validation.
 
 ## Why there are no cancel/reset/dispose messages
 
@@ -55,6 +73,21 @@ The host performs these operations by revoking generation and terminating/replac
 7. Only then append output, complete the operation, or change lifecycle. Whitelist constructed public data rather than returning the received object.
 
 The Worker applies the same shape, size, identity, direction, and phase validation to host inputs. Unknown operations fail closed. Malformed data on an active/current channel causes `PROTOCOL_ERROR`, invalidation, and at most one recovery; it must not throw out of the host event handler or leave a promise pending. Do not echo arbitrary malformed text in diagnostics.
+
+## Invalid, duplicate, and late message outcomes
+
+| Received situation | Outcome before any public state mutation |
+| --- | --- |
+| Unknown `type`/`op` or unsupported version from current Worker | `PROTOCOL_ERROR`; terminate Worker, settle current run or fail boot, one recovery only for an established runtime |
+| Malformed JSON, wrong primitive, wrong fields/nesting, or oversized current message | Same protocol failure; no uncaught handler exception |
+| Former Worker/generation, including its error/timer callback | Ignore **before parsing** and before output/timer/metadata changes |
+| Retired request ID in current generation, including duplicate result/stream/ready | Ignore; a completed operation cannot settle twice |
+| Future/never-issued request ID or future generation from current Worker | Protocol failure; never attach it to a newer run |
+| Valid identity but wrong phase/order (`result` before run, `ready` during run, skipped/repeated sequence) | Protocol failure while active; unexpected idle current-generation data invalidates the Worker |
+| Final result with inconsistent output totals, wrong label, status/error mismatch, or forbidden engine code | Protocol failure and invalidation; host constructs only a bounded engine failure |
+| Host `messageerror` or Worker `error` event | `WORKER_FAILURE`, boot failure, or idle recovery depending current state; event details do not cross public API |
+
+The dedicated Worker port gives a specific event source; a serialized `generation` value alone is not authentication. Every callback checks the captured Worker identity and controller generation before touching current state. The adapter copies only the generation/ID sent by the controller and rejects an out-of-order host command. A compromised trusted Worker/adapter remains inside the threat model as a residual risk, not something JSON validation can fully contain.
 
 ## Stale-response invariant
 

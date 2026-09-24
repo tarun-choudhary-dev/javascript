@@ -2,7 +2,7 @@
 
 A standalone browser library for running untrusted JavaScript through a small programmatic API. Future IDEs, education platforms, playgrounds, and other applications consume the engine; the engine has no dependency on their UI or application state.
 
-**Status: Stage 0 foundation only.** There is no executable engine, published package, build, or browser support claim. The contracts below are drafts for Phase 1. No runtime dependencies are installed or vendored.
+**Status: Phase 1 architecture audit.** Stage 0 is complete and the internal architecture is documented for a later implementation phase. There is no executable engine, published package, build, or browser support claim. No runtime dependencies are installed or vendored.
 
 The selected architecture is a dedicated Worker containing a trusted adapter and an embedded QuickJS interpreter compiled to WebAssembly. Guest programs run inside QuickJS, never in the browser's JavaScript global environment. The Worker provides interruption and separates computation from the UI thread; the embedded runtime supplies the guest capability boundary. See the [runtime research](docs/runtime.md) and [security model](docs/security.md).
 
@@ -45,7 +45,10 @@ Execution is intended to remain entirely in the browser. Static delivery of the 
 | Document | Purpose |
 | --- | --- |
 | [Stage 0 report](docs/stage-0-report.md) | Completion report, requirement traceability, risks, and Phase 1 recommendation |
+| [Phase 1 report](docs/stage-1-report.md) | Architecture audit, decision review, verification status, and Phase 2 prerequisites |
 | [Architecture](docs/architecture.md) | Scope, ownership, lifecycle, recovery, cancellation, and timeouts |
+| [Component ownership](docs/architecture/components.md) | Responsibility map, boundary data, and sole owners of mutable state |
+| [Flows and failures](docs/architecture/flows.md) | Initialization, run, cancellation, recovery, diagrams, failure and race matrices |
 | [Runtime](docs/runtime.md) | Candidate comparison, exact baseline, language semantics, and distribution |
 | [Security](docs/security.md) | Threat model, network/storage behavior, capability inventory, and verification requirements |
 | [API](docs/api.md) | Public contract, requests, results, and error taxonomy |
@@ -63,7 +66,7 @@ LICENSE                    existing AGPL v3 license text, preserved
 package.json               private identity; no entry point or fake test command
 .gitignore
 docs/                      design contracts and research
-src/README.md              intended ownership; implementation starts in Phase 1
+src/README.md              intended ownership for a later implementation phase
 tests/README.md            intended test layout; no runtime tests exist yet
 ```
 
@@ -71,4 +74,4 @@ Inspection on 2026-09-24 found only `.git` and `LICENSE`, one initial commit, an
 
 The repository's [LICENSE](LICENSE) contains the GNU AGPL version 3 text. It is unchanged. [Licensing](docs/licensing.md) records the unresolved `-only` versus `-or-later` designation and separates this project from the MIT-licensed proposed runtime dependencies.
 
-Stage 0 ends with these documents. Phase 1 requires a separate instruction; it must first prove loading, capability isolation, termination, and recovery in real browsers.
+The [Stage 0 report](docs/stage-0-report.md) is the historical baseline. The Phase 1 audit refines the design without code. Browser loading, capability isolation, termination, and recovery remain evidence gates for Phase 2 before untrusted execution can be claimed.
