@@ -1,0 +1,12 @@
+{
+  "name": "javascript-browser-engine",
+  "version": "0.0.0-stage.0",
+  "private": true,
+  "description": "Stage 0 architecture for a reusable browser-based JavaScript execution engine.",
+  "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tarun-choudhary-dev/javascript.git"
+  }
+}
